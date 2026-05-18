@@ -1,0 +1,65 @@
+{
+    "_README": "Placeholder questions used by the collector UI. Replace with final Omli question text. The pipeline treats the first 4 as 'prompted' (open-ended spontaneous speech). The remaining 8 are structured tasks (sentence repetition, naming, counting).",
+    "questions": [
+        {
+            "id": 1,
+            "type": "prompted",
+            "text": "Tell me about your favourite toy. What does it look like? What do you do with it?"
+        },
+        {
+            "id": 2,
+            "type": "prompted",
+            "text": "What did you do today? Tell me about the things you did."
+        },
+        {
+            "id": 3,
+            "type": "prompted",
+            "text": "If you could go anywhere in the world, where would you go and why?"
+        },
+        {
+            "id": 4,
+            "type": "prompted",
+            "text": "Tell me about your family. Who is in your family and what do they do?"
+        },
+        {
+            "id": 5,
+            "type": "sentence_repetition",
+            "text": "Repeat after me: \"The cat is sleeping on the mat.\""
+        },
+        {
+            "id": 6,
+            "type": "sentence_repetition",
+            "text": "Repeat after me: \"My birthday is in the summer.\""
+        },
+        {
+            "id": 7,
+            "type": "sentence_repetition",
+            "text": "Repeat after me: \"We went to the park yesterday.\""
+        },
+        {
+            "id": 8,
+            "type": "sentence_repetition",
+            "text": "Repeat after me: \"I have a red ball and a blue car.\""
+        },
+        {
+            "id": 9,
+            "type": "naming",
+            "text": "Say the word: \"apple\""
+        },
+        {
+            "id": 10,
+            "type": "naming",
+            "text": "Say the word: \"elephant\""
+        },
+        {
+            "id": 11,
+            "type": "naming",
+            "text": "Say the word: \"butterfly\""
+        },
+        {
+            "id": 12,
+            "type": "counting",
+            "text": "Count from one to ten."
+        }
+    ]
+}

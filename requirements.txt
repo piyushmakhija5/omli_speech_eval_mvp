@@ -1,0 +1,15 @@
+# ASD pipeline
+librosa
+praat-parselmouth
+webrtcvad
+scipy
+numpy
+soundfile
+
+# Collector (backend)
+fastapi
+uvicorn[standard]
+python-multipart
+
+# webrtcvad imports pkg_resources, which setuptools 81+ removed
+setuptools<81

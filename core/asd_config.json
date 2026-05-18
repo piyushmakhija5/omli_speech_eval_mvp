@@ -1,0 +1,125 @@
+{
+    "_README": "All thresholds are PROVISIONAL. Calibrate with SLP ground truth before clinical use.",
+    "_last_updated": "2026-05-18",
+    "_updated_by": "initial design \u2014 pre-validation",
+    "quality_thresholds": {
+        "min_snr_db": 5.0,
+        "max_clipping_ratio": 0.01,
+        "min_speech_ratio": 0.1,
+        "min_duration_s": 3.0,
+        "target_sr": 16000,
+        "min_total_spontaneous_s": 10.0,
+        "min_usable_prompted": 2,
+        "min_usable_total": 6,
+        "min_voiced_frames": 10
+    },
+    "scoring": {
+        "atypical_threshold_sd": 2.0,
+        "turn_taking_cv_threshold": 0.5,
+        "pause_variance_threshold": 50000
+    },
+    "age_groups": {
+        "3-4": {
+            "age_range_months": [
+                36,
+                59
+            ],
+            "pitch_variability": {
+                "mean": 65.0,
+                "std": 18.0
+            },
+            "pitch_range": {
+                "mean": 180.0,
+                "std": 50.0
+            },
+            "spectral_entropy": {
+                "mean": 0.75,
+                "std": 0.1
+            },
+            "ltas_slope": {
+                "mean": -0.015,
+                "std": 0.005
+            },
+            "latency": {
+                "mean": 2200,
+                "std": 800
+            },
+            "voice_stability": {
+                "jitter_mean": 2.5,
+                "jitter_std": 1.2,
+                "shimmer_mean": 8.0,
+                "shimmer_std": 3.5,
+                "hnr_mean": 15.0,
+                "hnr_std": 4.0
+            }
+        },
+        "5-6": {
+            "age_range_months": [
+                60,
+                83
+            ],
+            "pitch_variability": {
+                "mean": 50.0,
+                "std": 15.0
+            },
+            "pitch_range": {
+                "mean": 150.0,
+                "std": 45.0
+            },
+            "spectral_entropy": {
+                "mean": 0.72,
+                "std": 0.09
+            },
+            "ltas_slope": {
+                "mean": -0.018,
+                "std": 0.005
+            },
+            "latency": {
+                "mean": 1800,
+                "std": 600
+            },
+            "voice_stability": {
+                "jitter_mean": 2.0,
+                "jitter_std": 1.0,
+                "shimmer_mean": 7.0,
+                "shimmer_std": 3.0,
+                "hnr_mean": 17.0,
+                "hnr_std": 3.5
+            }
+        },
+        "7-8": {
+            "age_range_months": [
+                84,
+                107
+            ],
+            "pitch_variability": {
+                "mean": 42.0,
+                "std": 12.0
+            },
+            "pitch_range": {
+                "mean": 120.0,
+                "std": 40.0
+            },
+            "spectral_entropy": {
+                "mean": 0.7,
+                "std": 0.08
+            },
+            "ltas_slope": {
+                "mean": -0.02,
+                "std": 0.004
+            },
+            "latency": {
+                "mean": 1500,
+                "std": 500
+            },
+            "voice_stability": {
+                "jitter_mean": 1.8,
+                "jitter_std": 0.8,
+                "shimmer_mean": 6.0,
+                "shimmer_std": 2.5,
+                "hnr_mean": 18.0,
+                "hnr_std": 3.0
+            }
+        }
+    }
+}

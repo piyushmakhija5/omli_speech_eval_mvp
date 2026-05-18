@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Omli Speech Eval — Collector</title>
+    <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+    <main>
+        <header>
+            <h1>Omli Speech Sample Collector</h1>
+            <p class="muted">12 voice samples → <code>data/cases/&lt;case_id&gt;/q01.wav … q12.wav</code></p>
+        </header>
+
+        <section id="setup">
+            <label>
+                Child age (months)
+                <input id="ageMonths" type="number" min="24" max="120" value="66">
+            </label>
+            <button id="startBtn">Start new session</button>
+        </section>
+
+        <section id="recording" hidden>
+            <p class="meta">Case <code id="caseId"></code> · Question <span id="qNum"></span> · <span id="qType" class="tag"></span></p>
+            <blockquote id="qText"></blockquote>
+
+            <div class="controls">
+                <button id="recBtn">● Record</button>
+                <button id="acceptBtn" disabled>Accept &amp; next</button>
+                <button id="retryBtn" disabled>Discard take</button>
+            </div>
+            <audio id="playback" controls hidden></audio>
+            <p id="status" class="status">Ready.</p>
+        </section>
+
+        <section id="done" hidden>
+            <h2>All 12 samples collected.</h2>
+            <p>Folder: <code id="caseId2"></code></p>
+            <button id="assessBtn">Run ASD pipeline</button>
+            <pre id="result"></pre>
+        </section>
+    </main>
+    <script src="/static/recorder.js"></script>
+</body>
+</html>

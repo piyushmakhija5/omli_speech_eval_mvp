@@ -1,0 +1,134 @@
+:root {
+    --fg: #1a1a1a;
+    --muted: #6b7280;
+    --accent: #2563eb;
+    --danger: #dc2626;
+    --bg: #fafafa;
+    --card: #ffffff;
+    --border: #e5e7eb;
+}
+
+* { box-sizing: border-box; }
+
+body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    color: var(--fg);
+    background: var(--bg);
+    line-height: 1.5;
+}
+
+main {
+    max-width: 640px;
+    margin: 0 auto;
+    padding: 2rem 1.25rem 4rem;
+}
+
+header h1 { margin: 0 0 0.25rem; font-size: 1.5rem; }
+header .muted { margin: 0 0 2rem; color: var(--muted); font-size: 0.9rem; }
+
+section {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1.5rem;
+    margin-bottom: 1rem;
+}
+
+label {
+    display: block;
+    margin-bottom: 1rem;
+    font-size: 0.9rem;
+}
+
+input[type="number"] {
+    display: block;
+    margin-top: 0.25rem;
+    padding: 0.5rem;
+    width: 8rem;
+    font-size: 1rem;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+}
+
+button {
+    padding: 0.6rem 1rem;
+    font-size: 0.95rem;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--card);
+    cursor: pointer;
+}
+
+button:hover:not(:disabled) { background: #f3f4f6; }
+button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+#startBtn, #assessBtn {
+    background: var(--accent);
+    color: white;
+    border-color: var(--accent);
+}
+
+#startBtn:hover, #assessBtn:hover:not(:disabled) {
+    background: #1d4ed8;
+}
+
+#recBtn { background: var(--danger); color: white; border-color: var(--danger); }
+#recBtn:hover:not(:disabled) { background: #b91c1c; }
+
+.controls {
+    display: flex;
+    gap: 0.5rem;
+    margin: 1rem 0;
+    flex-wrap: wrap;
+}
+
+.meta {
+    color: var(--muted);
+    font-size: 0.85rem;
+    margin: 0 0 0.75rem;
+}
+
+.tag {
+    display: inline-block;
+    padding: 0.1rem 0.5rem;
+    background: #eef2ff;
+    color: #4338ca;
+    border-radius: 999px;
+    font-size: 0.75rem;
+}
+
+blockquote {
+    margin: 0 0 1rem;
+    padding: 1rem;
+    background: #f9fafb;
+    border-left: 3px solid var(--accent);
+    font-size: 1.1rem;
+}
+
+audio { width: 100%; margin: 0.5rem 0; }
+
+.status {
+    margin: 0.5rem 0 0;
+    color: var(--muted);
+    font-size: 0.85rem;
+    font-family: ui-monospace, "SF Mono", monospace;
+}
+
+code {
+    font-family: ui-monospace, "SF Mono", monospace;
+    font-size: 0.85em;
+    background: #f3f4f6;
+    padding: 0.1rem 0.3rem;
+    border-radius: 3px;
+}
+
+pre {
+    max-height: 24rem;
+    overflow: auto;
+    background: #0f172a;
+    color: #e2e8f0;
+    padding: 1rem;
+    border-radius: 6px;
+    font-size: 0.8rem;
+}
