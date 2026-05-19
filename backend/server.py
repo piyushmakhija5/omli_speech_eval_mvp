@@ -58,18 +58,6 @@ def create_case() -> dict:
     return {"case_id": case_id}
 
 
-# delay_status → pill color for the case list. Speech-delay consumer view
-# will own this mapping in Phase 4; until then keep it inline so the list
-# endpoint has something to render.
-_DELAY_STATUS_COLOR = {
-    "on_track": "green",
-    "behind": "yellow",
-    "significantly_behind": "red",
-    "insufficient_data": "gray",
-    "not_computed": "gray",
-}
-
-
 @app.get("/api/cases")
 def list_cases() -> list[dict]:
     """List all cases on disk (newest first) with light summary metadata."""
@@ -112,11 +100,12 @@ def list_cases() -> list[dict]:
 
         if row["has_speech_delay_result"]:
             try:
+                from core.speech_delay_consumer_view import STATUS_COLOR as _sd_status_color
                 with open(sd_path) as f:
                     sd = json.load(f)
                 row["speech_delay_status"] = sd.get("delay_status")
                 row["speech_delay_band"] = sd.get("developmental_band")
-                row["speech_delay_color"] = _DELAY_STATUS_COLOR.get(sd.get("delay_status"), "gray")
+                row["speech_delay_color"] = _sd_status_color.get(sd.get("delay_status"), "gray")
                 row["speech_delay_delay_months"] = sd.get("delay_months")
                 if row["child_age_months"] is None:
                     row["child_age_months"] = sd.get("child_age_months")
@@ -213,6 +202,8 @@ def assess(case_id: str, child_age_months: int = Form(66)) -> dict:
         json.dump(asd_raw, f, indent=2, default=str)
 
     # ---- Phase C: Speech-delay pipeline ----
+    from core.speech_delay_consumer_view import summarize_for_consumer as summarize_speech_delay
+
     sd_recordings = _build_speech_delay_recordings(case_id, all_audio)
     sd_raw = assess_speech_delay(
         sd_recordings,
@@ -229,7 +220,7 @@ def assess(case_id: str, child_age_months: int = Form(66)) -> dict:
 
     return {
         "asd": {"raw": asd_raw, "summary": summarize_for_consumer(asd_raw)},
-        "speech_delay": {"raw": sd_raw, "summary": None},  # consumer view ships in Phase 4
+        "speech_delay": {"raw": sd_raw, "summary": summarize_speech_delay(sd_raw)},
     }
 
 
@@ -237,10 +228,10 @@ def assess(case_id: str, child_age_months: int = Form(66)) -> dict:
 def summary(case_id: str) -> dict:
     """
     Re-summarise saved results without re-running pipelines.
-    Returns {asd: <summary or None>, speech_delay: {raw: <raw or None>}}.
-    Speech-delay summary translator arrives in Phase 4.
+    Returns {asd: <summary or None>, speech_delay: <summary or None>}.
     """
     from core.asd_consumer_view import summarize_for_consumer
+    from core.speech_delay_consumer_view import summarize_for_consumer as summarize_speech_delay
 
     out: dict = {"asd": None, "speech_delay": None}
 
@@ -252,7 +243,7 @@ def summary(case_id: str) -> dict:
     sd_path = storage.speech_delay_result_path(case_id)
     if os.path.exists(sd_path):
         with open(sd_path) as f:
-            out["speech_delay"] = {"raw": json.load(f), "summary": None}
+            out["speech_delay"] = summarize_speech_delay(json.load(f))
 
     if out["asd"] is None and out["speech_delay"] is None:
         raise HTTPException(status_code=404, detail=f"No saved results for case {case_id}")
