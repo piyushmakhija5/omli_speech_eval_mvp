@@ -3,14 +3,14 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Omli Speech Eval — Collector</title>
+    <title>Omli ASD Speech Screening</title>
     <link rel="stylesheet" href="/static/styles.css">
 </head>
 <body>
     <main>
         <header>
-            <h1>Omli Speech Sample Collector</h1>
-            <p class="muted">12 voice samples → <code>data/cases/&lt;case_id&gt;/q01.wav … q12.wav</code></p>
+            <h1>Omli ASD Speech Screening</h1>
+            <p class="muted">Acoustic biomarker screening for children aged 3–8. 12 voice samples → tiered risk output.</p>
         </header>
 
         <section id="setup">
@@ -19,6 +19,13 @@
                 <input id="ageYears" type="number" min="3" max="8" step="1" value="5">
             </label>
             <button id="startBtn">Start new session</button>
+        </section>
+
+        <section id="cases">
+            <h3 class="section-h" style="margin-top: 0">Previous cases</h3>
+            <ul id="caseList" class="case-list">
+                <li class="case-empty">Loading…</li>
+            </ul>
         </section>
 
         <section id="recording" hidden>
@@ -34,11 +41,70 @@
             <p id="status" class="status">Ready.</p>
         </section>
 
-        <section id="done" hidden>
+        <section id="postRecordingPrompt" hidden>
             <h2>All 12 samples collected.</h2>
-            <p>Folder: <code id="caseId2"></code></p>
-            <button id="assessBtn">Run ASD pipeline</button>
-            <pre id="result"></pre>
+            <p class="meta">Case <code id="caseId2"></code></p>
+            <button id="assessBtn" class="primary">See results</button>
+            <p id="assessStatus" class="status"></p>
+        </section>
+
+        <section id="resultPane" hidden>
+            <p class="meta">Case <code id="viewerCaseId"></code></p>
+
+            <div class="tabs">
+                <button class="tab active" data-tab="summary" id="tabSummary">Summary</button>
+                <button class="tab" data-tab="raw" id="tabRaw">Raw JSON</button>
+            </div>
+
+            <div id="summaryView">
+                <div class="headline" id="headline" data-color="gray">
+                    <div class="headline-icon" id="headlineIcon"></div>
+                    <div class="headline-text">
+                        <h2 id="verdict">—</h2>
+                        <p id="subtext">—</p>
+                        <div class="speech-stamp-row">
+                            <span class="speech-stamp-label">Speech patterns</span>
+                            <span class="speech-stamp" id="speechStamp" data-color="gray">—</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="alerts"></div>
+
+                <h3 class="section-h">Biomarker groups</h3>
+                <div class="group-grid" id="groupCards"></div>
+
+                <div class="meta-row">
+                    <div class="meta-card">
+                        <span class="meta-label">Confidence</span>
+                        <span class="meta-value" id="confLevel">—</span>
+                        <span class="meta-note" id="confNote">—</span>
+                    </div>
+                    <div class="meta-card">
+                        <span class="meta-label">Recordings used</span>
+                        <span class="meta-value" id="sessionRecs">—</span>
+                        <span class="meta-note" id="sessionNote"></span>
+                    </div>
+                </div>
+
+                <h3 class="section-h">ASD biomarker details</h3>
+                <div id="biomarkerDetails"></div>
+
+                <h3 class="section-h">What to do next</h3>
+                <ol id="nextSteps"></ol>
+            </div>
+
+            <div id="rawView" hidden>
+                <pre id="rawJson"></pre>
+            </div>
+
+            <div class="actions">
+                <button id="downloadBtn" class="ghost">Download raw results</button>
+                <button id="reassessBtn" class="ghost">Re-run pipeline</button>
+                <button id="newSessionBtn" class="ghost">Back to home</button>
+            </div>
+
+            <p class="disclaimer" id="disclaimer"></p>
         </section>
     </main>
     <script src="/static/recorder.js"></script>

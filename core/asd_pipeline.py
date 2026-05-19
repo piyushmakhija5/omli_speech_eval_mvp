@@ -760,9 +760,9 @@ def compute_voice_check(pitch_mean: Optional[float], age_group: str) -> dict:
     reason = None
     if not likely_child:
         reason = (
-            f"Mean F0 ({pitch_mean:.0f} Hz) is far below expected range for age "
-            f"{age_group} ({expected_low:.0f}-{expected_high:.0f} Hz). "
-            f"Voice may not be a child's — interpret tier with caution."
+            f"Adult voice identified: mean F0 ({pitch_mean:.0f} Hz) is far below "
+            f"expected range for age {age_group} ({expected_low:.0f}-{expected_high:.0f} Hz). "
+            f"The screening targets children 3–8 — interpret tier with caution."
         )
 
     return {

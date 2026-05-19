@@ -58,3 +58,28 @@ def list_wavs(case_id: str) -> list[str]:
         for f in os.listdir(cdir)
         if f.endswith(".wav")
     )
+
+
+def list_case_ids() -> list[str]:
+    """All case directories under data/cases/, sorted by case_id (newest first)."""
+    if not os.path.isdir(CASES_ROOT):
+        return []
+    ids = [
+        name for name in os.listdir(CASES_ROOT)
+        if os.path.isdir(os.path.join(CASES_ROOT, name))
+        and _CASE_ID_RE.match(name)
+    ]
+    return sorted(ids, reverse=True)
+
+
+def parse_created_at(case_id: str) -> str | None:
+    """Extract YYYY-MM-DDTHH:MM:SS from a case_id like 20260518-191523-xxxx."""
+    parts = case_id.split("-")
+    if len(parts) < 2 or len(parts[0]) != 8 or len(parts[1]) != 6:
+        return None
+    d, t = parts[0], parts[1]
+    return f"{d[:4]}-{d[4:6]}-{d[6:8]}T{t[:2]}:{t[2:4]}:{t[4:6]}"
+
+
+def result_path(case_id: str) -> str:
+    return os.path.join(case_dir(case_id), "asd_result.json")
