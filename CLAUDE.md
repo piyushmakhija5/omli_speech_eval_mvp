@@ -62,9 +62,12 @@ core/speech_delay_config.json     # Percentile tables (p10/p25/p50/p75/p90) + co
                                   # per age group, delay_thresholds, fuzzy_match_threshold
 core/speech_delay_consumer_view.py # Speech-delay raw → consumer summary translator
 
-backend/server.py                 # FastAPI. /assess runs BOTH pipelines from a single
-                                  # quality pass, saves two result files, returns combined
-                                  # {asd, speech_delay} response
+backend/server.py                 # FastAPI. /assess (async) runs single quality pass →
+                                  # Sarvam ASR fan-out → both pipelines → returns combined
+                                  # {asd, speech_delay} response. Lifespan warms Sarvam pool.
+backend/asr.py                    # SarvamProvider singleton (persistent aiohttp session),
+                                  # transcribe_file(path), transcribe_batch(paths) — mirrors
+                                  # production wrapper exactly. Whisper-fallback deferred.
 backend/storage.py                # File paths, case_id validation, QUESTION_TYPE_MAP
 
 frontend/index.html               # Two-column result viewer (≥900px); stacked below
@@ -194,20 +197,45 @@ Western, English-speaking children. Result JSONs include `"calibration_status":
 "provisional"` to remind consumers. Both consumer views render a provisional-
 norms info banner.
 
+## ASR integration
+
+`backend/asr.py` wraps Sarvam AI Speech-to-Text — mirrors production's
+`services/speech_provider_service.py` exactly (singleton, persistent aiohttp
+session warmed at FastAPI lifespan, identical form fields and response-parser
+fallback chain). On `/assess`, Sarvam runs concurrently across usable
+recordings via `asyncio.gather` after the quality pass; transcripts are
+spliced into `asr_transcript_clean` per recording before invoking
+`assess_speech_delay`.
+
+**Whisper deferred (2026-05-19 MVP decision).** Production has Whisper-base as
+an optional secondary, but the actual code path only fires when Sarvam fails,
+and Sarvam currently strips disfluencies server-side — so the original
+disfluency-aware-speaking-rate rationale doesn't pay off. For the MVP we
+ship Sarvam-only and accept that `speaking_rate` falls back to the cleaned
+transcript with `mode="asr_words_clean_fallback"` and a "may under-count
+disfluencies" note in the consumer view.
+
+The Whisper-fallback insertion point is documented in `backend/asr.py`'s
+module docstring. When we want it back (e.g. after SLP calibration shows
+disfluency-aware speaking rate is critical), add a `WhisperProvider` class
+and either chain it after Sarvam-failure in `transcribe_file` or run it in
+parallel to populate `asr_transcript_raw` with disfluencies preserved.
+
 ## What's NOT in this pipeline (yet)
 
-- **ASR + pronunciation integration in backend** — Phase L, deferred. Production
-  uses Sarvam (saaras:v3) primary + Whisper-base secondary; backend will wrap
-  both in `backend/asr.py` and populate `asr_transcript_clean` / `asr_transcript_raw`
-  per recording before invoking speech_delay. Until then, 4 speech-delay metrics
-  report `computed=false`.
+- **Pronunciation scoring (PCC metrics)** — Azure / ZIPA integration deferred.
+  Until plumbed, `single_word_pcc` and `connected_pcc` report `computed=false`.
+- **Whisper secondary ASR** — deferred per above; insertion point documented
+  in `backend/asr.py`.
 - **Parent behavioral questions** — M-CHAT-R style. Deferred.
 - **Two-session confirmation** — app-level logic, not pipeline.
 - **Atomic write across both result files** — backend writes them sequentially;
   if it crashes between, case is in inconsistent state. Re-run button is the
   recovery path. Acceptable for v1.
-- **Parallel pipeline execution** — currently sequential (~20s for both
-  pipelines). Future: asyncio.gather once Whisper is async-wrapped.
+- **Parallel pipeline execution between ASD and speech-delay** — currently
+  sequential (~20s for both pipelines, plus ~5-15s Sarvam). Future:
+  asyncio.gather the pipeline calls once both pipelines are pure (no shared
+  CONFIG mutation).
 
 ## Coding conventions
 

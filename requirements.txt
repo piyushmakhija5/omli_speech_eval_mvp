@@ -14,5 +14,9 @@ python-multipart
 # Speech delay pipeline — fuzzy word matching for ASR transcripts
 rapidfuzz
 
+# ASR — Sarvam (HTTP) wrapper for transcript generation
+aiohttp
+python-dotenv
+
 # webrtcvad imports pkg_resources, which setuptools 81+ removed
 setuptools<81

@@ -13,12 +13,27 @@ All metrics are designed to be language-independent (English / Hindi / Hinglish)
 python -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
+cp .env.example .env                  # add your Sarvam key (see below)
 python -m core.asd_pipeline           # quick config check
 python -m core.speech_delay_pipeline  # quick config check
 ```
 
 > `requirements.txt` pins `setuptools<81` because `webrtcvad` imports the legacy
 > `pkg_resources` module, which setuptools 81+ removed.
+
+### ASR configuration (.env)
+
+Drop your Sarvam credentials into `.env` (gitignored). Without them, the speech-delay pipeline's four ASR-dependent metrics — `word_coverage`, `naming_accuracy`, `single_word_pcc`, `connected_pcc` — and `speaking_rate` will report `computed=false`, and the pipeline falls back to its five pure-audio metrics.
+
+```
+SARVAM_API_KEY=sk_xxx
+SARVAM_STT_URL=https://api.sarvam.ai/speech-to-text
+SARVAM_STT_LANGUAGE_CODE=hi-IN
+SARVAM_STT_MODEL=saaras:v3
+SARVAM_STT_MODE=codemix
+```
+
+**Note on Sarvam + disfluencies:** Sarvam normalises away repetitions and filler words. The pipeline's `speaking_rate` metric will use Sarvam's cleaned transcript and report `mode: "asr_words_clean_fallback"` with a note that disfluent speakers may be slightly under-counted. A future Whisper-secondary integration can plug into `backend/asr.py` to restore disfluency-aware speaking rate; see the module docstring for the insertion point.
 
 ## Quick test (synthetic audio)
 
@@ -192,4 +207,4 @@ CLAUDE.md
 - Phase 4 — speech_delay consumer view translator — done
 - Phase 5 — two-column UI with side-by-side rendering — done
 - Phase 6 — scenario tests + docs — done
-- **Phase L (deferred)** — Sarvam ASR + Whisper-base secondary in backend; populates `asr_transcript_clean` + `asr_transcript_raw` per recording. Until shipped, 4 speech-delay metrics report `computed=false`.
+- Phase L — Sarvam ASR integration — done. Sarvam-only for the MVP (Whisper deferred — `backend/asr.py` docstring documents the fallback insertion point and rationale)

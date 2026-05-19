@@ -18,19 +18,43 @@ Routes:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
+from contextlib import asynccontextmanager
 
+from dotenv import load_dotenv
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from backend import storage
+# Load .env before any module that reads env vars at import time (e.g. backend.asr's
+# SarvamProvider singleton). Falls through silently if .env doesn't exist.
+load_dotenv()
+
+from backend import storage  # noqa: E402 — env loaded above
 
 logger = logging.getLogger("collector")
 
-app = FastAPI(title="Omli Speech Eval — Collector")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Warm Sarvam's connection pool at startup; close it at shutdown."""
+    from backend.asr import sarvam
+    if sarvam.configured:
+        await sarvam.warmup()
+    else:
+        logger.warning(
+            "SARVAM_API_KEY not set — speech_delay ASR-dependent metrics will "
+            "report computed=false until you populate .env"
+        )
+    yield
+    if sarvam.configured:
+        await sarvam.close()
+
+
+app = FastAPI(title="Omli Speech Eval — Collector", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=storage.FRONTEND_DIR), name="static")
 
 
@@ -164,20 +188,27 @@ def _build_speech_delay_recordings(case_id: str, wavs: list) -> list:
 
 
 @app.post("/api/cases/{case_id}/assess")
-def assess(case_id: str, child_age_months: int = Form(66)) -> dict:
+async def assess(case_id: str, child_age_months: int = Form(66)) -> dict:
     """
     Run both pipelines against a case in a single pass.
 
-    Quality assessment runs ONCE per recording and the result dict is shared
-    with both pipelines — no double-processing the same audio. Saves the two
-    raw result JSON files; returns {asd: {raw, summary}, speech_delay: {raw}}.
-    The speech_delay summary is added in Phase 4 once its consumer view ships.
+    Order:
+      A) Single quality pass shared by both pipelines.
+      B) Sarvam ASR fan-out (parallel) — populates asr_transcript_clean
+         per recording.
+      C) ASD pipeline (no ASR dependency).
+      D) Speech-delay pipeline (consumes ASR transcripts + quality dict).
+
+    Pipeline calls are sync + CPU-bound (librosa, Praat). They run on the
+    asyncio threadpool via ``asyncio.to_thread`` so the event loop stays
+    free for the ASR HTTP fan-out.
     """
-    # Imports inside handler so server boot stays fast.
     from core.asd_consumer_view import summarize_for_consumer
     from core.asd_pipeline import assess_asd_risk
     from core.audio_analysis import assess_recording_quality
+    from core.speech_delay_consumer_view import summarize_for_consumer as summarize_speech_delay
     from core.speech_delay_pipeline import assess_speech_delay
+    from backend.asr import sarvam, transcribe_batch
 
     wavs = storage.list_wavs(case_id)
     if len(wavs) < 4:
@@ -187,12 +218,22 @@ def assess(case_id: str, child_age_months: int = Form(66)) -> dict:
         )
 
     # ---- Phase A: Single quality pass shared across both pipelines ----
-    quality_dict = {p: assess_recording_quality(p) for p in wavs}
+    quality_dict = await asyncio.to_thread(
+        lambda: {p: assess_recording_quality(p) for p in wavs}
+    )
 
-    # ---- Phase B: ASD pipeline ----
+    # ---- Phase B: ASR via Sarvam (parallel) ----
+    asr_results: dict = {}
+    if sarvam.configured:
+        usable_paths = [p for p in wavs if quality_dict[p].usable]
+        if usable_paths:
+            asr_results = await transcribe_batch(usable_paths)
+
+    # ---- Phase C: ASD pipeline ----
     prompted = wavs[:4]
     all_audio = wavs[:storage.NUM_QUESTIONS]
-    asd_raw = assess_asd_risk(
+    asd_raw = await asyncio.to_thread(
+        assess_asd_risk,
         prompted_question_audio_paths=prompted,
         all_audio_paths=all_audio,
         child_age_months=child_age_months,
@@ -201,11 +242,18 @@ def assess(case_id: str, child_age_months: int = Form(66)) -> dict:
     with open(storage.result_path(case_id), "w") as f:
         json.dump(asd_raw, f, indent=2, default=str)
 
-    # ---- Phase C: Speech-delay pipeline ----
-    from core.speech_delay_consumer_view import summarize_for_consumer as summarize_speech_delay
-
+    # ---- Phase D: Speech-delay pipeline ----
     sd_recordings = _build_speech_delay_recordings(case_id, all_audio)
-    sd_raw = assess_speech_delay(
+    # Splice ASR transcripts in. asr_transcript_raw stays None per the
+    # MVP decision (see backend/asr.py module docstring).
+    for rec in sd_recordings:
+        result = asr_results.get(rec["audio_path"])
+        if result:
+            rec["asr_transcript_clean"] = result["clean"]
+            rec["asr_transcript_raw"] = result["raw"]  # None in MVP
+
+    sd_raw = await asyncio.to_thread(
+        assess_speech_delay,
         sd_recordings,
         child_age_months=child_age_months,
         recording_quality=quality_dict,
@@ -213,9 +261,11 @@ def assess(case_id: str, child_age_months: int = Form(66)) -> dict:
     with open(storage.speech_delay_result_path(case_id), "w") as f:
         json.dump(sd_raw, f, indent=2, default=str)
 
+    transcripts_ok = sum(1 for r in asr_results.values() if r.get("clean"))
     logger.info(
-        "Case %s assessed — asd.tier=%s speech_delay.status=%s band=%s",
-        case_id, asd_raw.get("tier"), sd_raw.get("delay_status"), sd_raw.get("developmental_band"),
+        "Case %s assessed — asd.tier=%s sd.status=%s band=%s sarvam=%d/%d",
+        case_id, asd_raw.get("tier"), sd_raw.get("delay_status"),
+        sd_raw.get("developmental_band"), transcripts_ok, len(wavs),
     )
 
     return {

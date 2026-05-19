@@ -5,4 +5,7 @@ __pycache__/
 data/cases/
 data/synthetic/
 
+# Local secrets — never commit. Use .env.example as the template.
+.env
+
 .DS_Store
