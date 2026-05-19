@@ -92,14 +92,43 @@ uvicorn backend.server:app --reload   # http://localhost:8000
 Each session writes `data/cases/<case_id>/q01.wav` … `q12.wav` — feed that folder
 straight to `tests.test_asd_pipeline --audio-dir`.
 
+## Target age band
+
+This pipeline is calibrated for **children aged 3-8** (36-107 months). The only age
+groups defined are `3-4`, `5-6`, `7-8`. We do not plan to support 0-2, 9+, or adult
+voices in this codebase — those are different screening problems with different
+markers.
+
+Out-of-band voices (e.g. a parent recording instead of the child) are caught by
+the `voice_check` field in the result: if mean F0 is more than
+`atypical_threshold_sd` SDs below the age-group `pitch_mean` norm, `likely_child`
+is set to `false` with a human-readable reason. The tier is NOT overridden — both
+values are returned so the caller can decide. See `compute_voice_check()` in
+`core/asd_pipeline.py`.
+
+## Language independence
+
+All metrics are acoustic (pitch, spectral shape, jitter/shimmer/HNR, VAD-based
+timing) and do not depend on phonology, so the pipeline is designed to work
+identically across English, Hindi, and Hinglish. **No language detection or
+language-specific code anywhere — recordings can mix languages within a single
+session.** Case `20260518-221449-15da` is a mixed Hindi/Hinglish/English session
+that ran through the full pipeline cleanly; informal evidence that the
+language-independent claim holds. Formal cross-language validation is still TODO.
+
 ## What's provisional / needs calibration
 
-ALL age-adjusted norms in `core/asd_config.json` are educated guesses from published research on Western, English-speaking children. They have NOT been validated on:
+ALL age-adjusted norms in `core/asd_config.json` are educated guesses from
+published research on Western, English-speaking children. They have NOT been
+validated on:
 - Hindi-speaking children
 - Indian English-speaking children
 - Children in noisy home environments (mobile recordings)
 
-The code will produce valid numbers. Whether those numbers, compared against these thresholds, produce correct ASD classifications is what SLP validation will determine. Expect the numbers in the config to change significantly after calibration.
+The code will produce valid numbers. Whether those numbers, compared against
+these thresholds, produce correct ASD classifications is what SLP validation
+will determine. Expect the numbers in the config to change significantly after
+calibration.
 
 ## What's NOT in this pipeline
 

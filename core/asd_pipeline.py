@@ -123,6 +123,7 @@ def _load_config(config_path: str = None) -> dict:
         "pause_variance_threshold": scoring.get("pause_variance_threshold", 50000),
 
         # Age norms (restructured from age_groups)
+        "pitch_mean_norms": {},
         "pitch_variability_norms": {},
         "pitch_range_norms": {},
         "spectral_entropy_norms": {},
@@ -135,6 +136,7 @@ def _load_config(config_path: str = None) -> dict:
     }
 
     for group_name, group_data in age_groups.items():
+        config["pitch_mean_norms"][group_name] = group_data.get("pitch_mean", {"mean": 275, "std": 28})
         config["pitch_variability_norms"][group_name] = group_data.get("pitch_variability", {"mean": 50, "std": 15})
         config["pitch_range_norms"][group_name] = group_data.get("pitch_range", {"mean": 150, "std": 45})
         config["spectral_entropy_norms"][group_name] = group_data.get("spectral_entropy", {"mean": 0.72, "std": 0.09})
@@ -157,6 +159,7 @@ def _default_config() -> dict:
         "min_duration_s": 3.0, "target_sr": 16000, "min_total_spontaneous_s": 10.0,
         "min_usable_prompted": 2, "min_usable_total": 6, "min_voiced_frames": 10,
         "atypical_threshold_sd": 2.0, "turn_taking_cv_threshold": 0.5, "pause_variance_threshold": 50000,
+        "pitch_mean_norms": {"3-4": {"mean": 295, "std": 28}, "5-6": {"mean": 275, "std": 28}, "7-8": {"mean": 245, "std": 28}},
         "pitch_variability_norms": {"3-4": {"mean": 65, "std": 18}, "5-6": {"mean": 50, "std": 15}, "7-8": {"mean": 42, "std": 12}},
         "pitch_range_norms": {"3-4": {"mean": 180, "std": 50}, "5-6": {"mean": 150, "std": 45}, "7-8": {"mean": 120, "std": 40}},
         "spectral_entropy_norms": {"3-4": {"mean": 0.75, "std": 0.10}, "5-6": {"mean": 0.72, "std": 0.09}, "7-8": {"mean": 0.70, "std": 0.08}},
@@ -724,6 +727,53 @@ def compute_risk_tier(group_results: dict) -> dict:
 
 
 # =============================================================================
+# VOICE CHECK (soft warning if speaker doesn't look child-like)
+# =============================================================================
+
+def compute_voice_check(pitch_mean: Optional[float], age_group: str) -> dict:
+    """
+    Soft sanity check: is the speaker plausibly a child in the target age band?
+    Flags if mean F0 is more than `atypical_threshold_sd` SDs below the age-group
+    norm. Adult voices (~120 Hz male, ~210 Hz female) fall far outside the 3-8yo
+    range (~250-300 Hz), so this catches the common "wrong speaker" case.
+    """
+    if pitch_mean is None:
+        return {
+            "pitch_mean_hz": None,
+            "likely_child": None,
+            "reason": "pitch_mean not computed",
+        }
+
+    norms = CONFIG["pitch_mean_norms"].get(age_group)
+    if norms is None:
+        return {
+            "pitch_mean_hz": round(pitch_mean, 1),
+            "likely_child": None,
+            "reason": f"No pitch_mean norm for age group {age_group}",
+        }
+
+    threshold = CONFIG["atypical_threshold_sd"]
+    expected_low = norms["mean"] - threshold * norms["std"]
+    expected_high = norms["mean"] + threshold * norms["std"]
+    likely_child = pitch_mean >= expected_low
+
+    reason = None
+    if not likely_child:
+        reason = (
+            f"Mean F0 ({pitch_mean:.0f} Hz) is far below expected range for age "
+            f"{age_group} ({expected_low:.0f}-{expected_high:.0f} Hz). "
+            f"Voice may not be a child's — interpret tier with caution."
+        )
+
+    return {
+        "pitch_mean_hz": round(pitch_mean, 1),
+        "expected_range_for_age_hz": [round(expected_low, 1), round(expected_high, 1)],
+        "likely_child": likely_child,
+        "reason": reason,
+    }
+
+
+# =============================================================================
 # CONFIDENCE SCORE
 # =============================================================================
 
@@ -829,6 +879,7 @@ def assess_asd_risk(
             "non_computable_groups": ["prosody", "spectral", "interaction", "voice_stability"],
             "biomarkers": {},
             "group_details": {},
+            "voice_check": compute_voice_check(None, age_group),
             "confidence": compute_confidence(all_quality, prompted_quality, {}),
             "quality_report": {
                 "all_recordings": [{"path": q.path, "usable": q.usable, "flags": [f.value for f in q.flags], "snr_db": round(q.snr_db, 1), "duration_s": round(q.duration_s, 1), "rejection_reason": q.rejection_reason} for q in all_quality],
@@ -913,11 +964,13 @@ def assess_asd_risk(
     group_results = evaluate_biomarker_groups(biomarkers, age_group)
     risk = compute_risk_tier(group_results)
 
-    # ---- Phase 7: Confidence ----
+    # ---- Phase 7: Confidence + voice check ----
     confidence = compute_confidence(all_quality, prompted_quality, group_results)
+    voice_check = compute_voice_check(biomarkers.get("pitch_mean"), age_group)
 
     # ---- Assemble output ----
     risk["biomarkers"] = biomarkers
+    risk["voice_check"] = voice_check
     risk["confidence"] = confidence
     risk["quality_report"] = {
         "all_recordings": [
@@ -938,7 +991,10 @@ def assess_asd_risk(
     risk["age_group"] = age_group
     risk["child_age_months"] = child_age_months
 
-    logger.info(f"ASD assessment complete: tier={risk['tier']}, confidence={confidence['confidence_score']}")
+    logger.info(
+        f"ASD assessment complete: tier={risk['tier']}, confidence={confidence['confidence_score']}, "
+        f"likely_child={voice_check.get('likely_child')}"
+    )
     return risk
 
 

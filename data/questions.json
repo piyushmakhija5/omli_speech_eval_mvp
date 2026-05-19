@@ -44,17 +44,17 @@
         {
             "id": 9,
             "type": "naming",
-            "text": "Say the word: \"apple\""
+            "text": "Say each word three times: \"apple, apple, apple\""
         },
         {
             "id": 10,
             "type": "naming",
-            "text": "Say the word: \"elephant\""
+            "text": "Say each word three times: \"elephant, elephant, elephant\""
         },
         {
             "id": 11,
             "type": "naming",
-            "text": "Say the word: \"butterfly\""
+            "text": "Say each word three times: \"butterfly, butterfly, butterfly\""
         },
         {
             "id": 12,

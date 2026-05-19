@@ -125,7 +125,7 @@ async function init() {
     const r = await fetch("/api/questions");
     const data = await r.json();
     state.questions = data.questions;
-    $("ageMonths").value = state.ageMonths;
+    $("ageYears").value = Math.round(state.ageMonths / 12);
     $("startBtn").onclick = startSession;
     $("recBtn").onclick = toggleRecord;
     $("acceptBtn").onclick = acceptAndUpload;
@@ -134,7 +134,8 @@ async function init() {
 }
 
 async function startSession() {
-    state.ageMonths = parseInt($("ageMonths").value, 10) || 66;
+    const years = parseInt($("ageYears").value, 10) || 5;
+    state.ageMonths = years * 12;
     const r = await fetch("/api/cases", { method: "POST" });
     const { case_id } = await r.json();
     state.caseId = case_id;
