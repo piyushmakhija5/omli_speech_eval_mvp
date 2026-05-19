@@ -1,0 +1,61 @@
+{
+    "_README": "PROVISIONAL — percentile tables are educated guesses derived from Western, English-speaking child norms. MUST be calibrated against SLP ground truth before clinical use. Indian Hindi/English/Hinglish norms will likely differ significantly.",
+    "_last_updated": "2026-05-19",
+    "_convention": "p10 = worst-10% cutoff regardless of metric direction. For 'higher is better' metrics (PCC, accuracy, rate, HNR) p10 holds the lowest value; for 'lower is better' metrics (jitter, shimmer, pause_ratio) p10 holds the highest (worst) value. The lookup is direction-agnostic — it sorts breakpoints by value and interpolates.",
+    "scoring": {
+        "composition_method": "lowest_domain",
+        "delay_thresholds": {
+            "on_track_min_percentile": 25,
+            "behind_min_percentile": 10
+        }
+    },
+    "fuzzy_match_threshold": 75,
+    "syllables_per_word_default": 1.85,
+    "age_groups": {
+        "3-4": {
+            "age_range_months": [36, 59],
+            "norms": {
+                "single_word_pcc":      {"p10": 65,   "p25": 75,   "p50": 85,  "p75": 92,  "p90": 97},
+                "connected_pcc_offset": 7,
+                "word_coverage":        {"p10": 50,   "p25": 65,   "p50": 78,  "p75": 88,  "p90": 95},
+                "naming_accuracy":      {"p10": 50,   "p25": 65,   "p50": 80,  "p75": 90,  "p90": 100},
+                "speaking_rate_wpm":    {"p10": 60,   "p25": 80,   "p50": 100, "p75": 120, "p90": 140},
+                "pause_ratio":          {"p10": 0.70, "p25": 0.55, "p50": 0.40,"p75": 0.30,"p90": 0.20},
+                "pitch_hz":             {"p10": 220,  "p25": 250,  "p50": 280, "p75": 310, "p90": 350},
+                "jitter_pct":           {"p10": 5.0,  "p25": 3.5,  "p50": 2.0, "p75": 1.0, "p90": 0.5},
+                "shimmer_pct":          {"p10": 15.0, "p25": 10.0, "p50": 7.0, "p75": 4.0, "p90": 2.0},
+                "hnr_db":               {"p10": 8,    "p25": 12,   "p50": 15,  "p75": 18,  "p90": 22}
+            }
+        },
+        "5-6": {
+            "age_range_months": [60, 83],
+            "norms": {
+                "single_word_pcc":      {"p10": 75,   "p25": 82,   "p50": 90,  "p75": 95,  "p90": 98},
+                "connected_pcc_offset": 6,
+                "word_coverage":        {"p10": 60,   "p25": 72,   "p50": 82,  "p75": 90,  "p90": 96},
+                "naming_accuracy":      {"p10": 60,   "p25": 75,   "p50": 85,  "p75": 92,  "p90": 100},
+                "speaking_rate_wpm":    {"p10": 80,   "p25": 100,  "p50": 120, "p75": 140, "p90": 160},
+                "pause_ratio":          {"p10": 0.60, "p25": 0.48, "p50": 0.35,"p75": 0.25,"p90": 0.15},
+                "pitch_hz":             {"p10": 210,  "p25": 240,  "p50": 270, "p75": 300, "p90": 340},
+                "jitter_pct":           {"p10": 4.0,  "p25": 2.8,  "p50": 1.5, "p75": 0.8, "p90": 0.4},
+                "shimmer_pct":          {"p10": 13.0, "p25": 9.0,  "p50": 6.0, "p75": 3.5, "p90": 1.8},
+                "hnr_db":               {"p10": 10,   "p25": 14,   "p50": 17,  "p75": 20,  "p90": 23}
+            }
+        },
+        "7-8": {
+            "age_range_months": [84, 107],
+            "norms": {
+                "single_word_pcc":      {"p10": 82,   "p25": 88,   "p50": 93,  "p75": 97,  "p90": 99},
+                "connected_pcc_offset": 5,
+                "word_coverage":        {"p10": 70,   "p25": 80,   "p50": 88,  "p75": 94,  "p90": 98},
+                "naming_accuracy":      {"p10": 70,   "p25": 82,   "p50": 90,  "p75": 96,  "p90": 100},
+                "speaking_rate_wpm":    {"p10": 100,  "p25": 120,  "p50": 140, "p75": 160, "p90": 180},
+                "pause_ratio":          {"p10": 0.55, "p25": 0.42, "p50": 0.30,"p75": 0.22,"p90": 0.12},
+                "pitch_hz":             {"p10": 200,  "p25": 225,  "p50": 250, "p75": 280, "p90": 320},
+                "jitter_pct":           {"p10": 3.5,  "p25": 2.4,  "p50": 1.2, "p75": 0.7, "p90": 0.3},
+                "shimmer_pct":          {"p10": 11.0, "p25": 8.0,  "p50": 5.0, "p75": 3.0, "p90": 1.5},
+                "hnr_db":               {"p10": 12,   "p25": 16,   "p50": 18,  "p75": 21,  "p90": 24}
+            }
+        }
+    }
+}

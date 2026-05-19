@@ -4,16 +4,16 @@ Run with:
     uvicorn backend.server:app --reload
 
 Routes:
-    GET  /                          → single-page collector (frontend/index.html)
-    GET  /static/<path>             → served from frontend/
-    GET  /api/questions             → questions.json
-    GET  /api/cases                 → list all cases with metadata
-    POST /api/cases                 → mint a new case_id
-    POST /api/cases/{id}/upload     → multipart: file (wav), q (1..12)
-    POST /api/cases/{id}/assess     → runs core.asd_pipeline; returns {raw, summary}
-    GET  /api/cases/{id}/summary    → re-summarise saved asd_result.json
-    GET  /api/cases/{id}/raw        → download saved asd_result.json
-    GET  /api/health                → ok
+    GET  /                              → single-page collector (frontend/index.html)
+    GET  /static/<path>                 → served from frontend/
+    GET  /api/questions                 → questions.json
+    GET  /api/cases                     → list all cases with metadata (both pipelines)
+    POST /api/cases                     → mint a new case_id
+    POST /api/cases/{id}/upload         → multipart: file (wav), q (1..12)
+    POST /api/cases/{id}/assess         → runs both pipelines; returns {asd, speech_delay}
+    GET  /api/cases/{id}/summary        → re-summarise saved results (both pipelines)
+    GET  /api/cases/{id}/raw?which=...  → download asd_result.json or speech_delay_result.json
+    GET  /api/health                    → ok
 """
 
 from __future__ import annotations
@@ -58,6 +58,18 @@ def create_case() -> dict:
     return {"case_id": case_id}
 
 
+# delay_status → pill color for the case list. Speech-delay consumer view
+# will own this mapping in Phase 4; until then keep it inline so the list
+# endpoint has something to render.
+_DELAY_STATUS_COLOR = {
+    "on_track": "green",
+    "behind": "yellow",
+    "significantly_behind": "red",
+    "insufficient_data": "gray",
+    "not_computed": "gray",
+}
+
+
 @app.get("/api/cases")
 def list_cases() -> list[dict]:
     """List all cases on disk (newest first) with light summary metadata."""
@@ -65,29 +77,54 @@ def list_cases() -> list[dict]:
 
     out = []
     for case_id in storage.list_case_ids():
-        rpath = storage.result_path(case_id)
+        asd_path = storage.result_path(case_id)
+        sd_path = storage.speech_delay_result_path(case_id)
         n_recs = len(storage.list_wavs(case_id))
         row = {
             "case_id": case_id,
             "created_at": storage.parse_created_at(case_id),
             "num_recordings": n_recs,
-            "has_result": os.path.exists(rpath),
-            "tier": None,
-            "verdict": None,
-            "color": None,
+            "has_asd_result": os.path.exists(asd_path),
+            "has_speech_delay_result": os.path.exists(sd_path),
             "child_age_months": None,
+            # ASD columns
+            "asd_tier": None,
+            "asd_verdict": None,
+            "asd_color": None,
+            # Speech-delay columns
+            "speech_delay_status": None,
+            "speech_delay_band": None,
+            "speech_delay_color": None,
+            "speech_delay_delay_months": None,
         }
-        if row["has_result"]:
+
+        if row["has_asd_result"]:
             try:
-                with open(rpath) as f:
+                with open(asd_path) as f:
                     raw = json.load(f)
                 summary = summarize_for_consumer(raw)
-                row["tier"] = raw.get("tier")
-                row["verdict"] = summary["headline"]["verdict"]
-                row["color"] = summary["headline"]["color"]
+                row["asd_tier"] = raw.get("tier")
+                row["asd_verdict"] = summary["headline"]["verdict"]
+                row["asd_color"] = summary["headline"]["color"]
                 row["child_age_months"] = raw.get("child_age_months")
             except Exception as e:
-                logger.warning("Could not read %s: %s", rpath, e)
+                logger.warning("Could not read %s: %s", asd_path, e)
+
+        if row["has_speech_delay_result"]:
+            try:
+                with open(sd_path) as f:
+                    sd = json.load(f)
+                row["speech_delay_status"] = sd.get("delay_status")
+                row["speech_delay_band"] = sd.get("developmental_band")
+                row["speech_delay_color"] = _DELAY_STATUS_COLOR.get(sd.get("delay_status"), "gray")
+                row["speech_delay_delay_months"] = sd.get("delay_months")
+                if row["child_age_months"] is None:
+                    row["child_age_months"] = sd.get("child_age_months")
+            except Exception as e:
+                logger.warning("Could not read %s: %s", sd_path, e)
+
+        # Convenience: a single `has_result` flag for any saved result.
+        row["has_result"] = row["has_asd_result"] or row["has_speech_delay_result"]
         out.append(row)
     return out
 
@@ -109,11 +146,49 @@ async def upload(case_id: str, q: int = Form(...), file: UploadFile = File(...))
     return {"ok": True, "path": os.path.relpath(path, storage.PROJECT_ROOT), "bytes": len(data)}
 
 
+def _load_questions() -> list:
+    """Return the question list from data/questions.json."""
+    with open(storage.QUESTIONS_PATH) as f:
+        return json.load(f)["questions"]
+
+
+def _build_speech_delay_recordings(case_id: str, wavs: list) -> list:
+    """
+    Pair each recording with task_type + expected_text from questions.json.
+    Recording q01.wav → questions[0], q02.wav → questions[1], etc.
+    """
+    questions = _load_questions()
+    out = []
+    for i, path in enumerate(wavs):
+        if i >= len(questions):
+            break
+        q = questions[i]
+        out.append({
+            "audio_path": path,
+            "task_type": storage.QUESTION_TYPE_MAP.get(q["type"], "prompted_question"),
+            "expected_text": q.get("expected_text"),
+            "asr_transcript_clean": None,  # populated by backend ASR in Phase L
+            "asr_transcript_raw": None,
+            "pronunciation_scores": None,
+        })
+    return out
+
+
 @app.post("/api/cases/{case_id}/assess")
 def assess(case_id: str, child_age_months: int = Form(66)) -> dict:
-    # Import here so server boots fast even if librosa/Praat are slow to import.
-    from core.asd_pipeline import assess_asd_risk
+    """
+    Run both pipelines against a case in a single pass.
+
+    Quality assessment runs ONCE per recording and the result dict is shared
+    with both pipelines — no double-processing the same audio. Saves the two
+    raw result JSON files; returns {asd: {raw, summary}, speech_delay: {raw}}.
+    The speech_delay summary is added in Phase 4 once its consumer view ships.
+    """
+    # Imports inside handler so server boot stays fast.
     from core.asd_consumer_view import summarize_for_consumer
+    from core.asd_pipeline import assess_asd_risk
+    from core.audio_analysis import assess_recording_quality
+    from core.speech_delay_pipeline import assess_speech_delay
 
     wavs = storage.list_wavs(case_id)
     if len(wavs) < 4:
@@ -122,43 +197,86 @@ def assess(case_id: str, child_age_months: int = Form(66)) -> dict:
             detail=f"Case {case_id} has only {len(wavs)} recordings; need at least 4.",
         )
 
+    # ---- Phase A: Single quality pass shared across both pipelines ----
+    quality_dict = {p: assess_recording_quality(p) for p in wavs}
+
+    # ---- Phase B: ASD pipeline ----
     prompted = wavs[:4]
     all_audio = wavs[:storage.NUM_QUESTIONS]
-
-    raw = assess_asd_risk(
+    asd_raw = assess_asd_risk(
         prompted_question_audio_paths=prompted,
         all_audio_paths=all_audio,
         child_age_months=child_age_months,
+        recording_quality=quality_dict,
     )
-    out_path = storage.result_path(case_id)
-    with open(out_path, "w") as f:
-        json.dump(raw, f, indent=2, default=str)
-    logger.info("Wrote %s", out_path)
+    with open(storage.result_path(case_id), "w") as f:
+        json.dump(asd_raw, f, indent=2, default=str)
 
-    return {"raw": raw, "summary": summarize_for_consumer(raw)}
+    # ---- Phase C: Speech-delay pipeline ----
+    sd_recordings = _build_speech_delay_recordings(case_id, all_audio)
+    sd_raw = assess_speech_delay(
+        sd_recordings,
+        child_age_months=child_age_months,
+        recording_quality=quality_dict,
+    )
+    with open(storage.speech_delay_result_path(case_id), "w") as f:
+        json.dump(sd_raw, f, indent=2, default=str)
+
+    logger.info(
+        "Case %s assessed — asd.tier=%s speech_delay.status=%s band=%s",
+        case_id, asd_raw.get("tier"), sd_raw.get("delay_status"), sd_raw.get("developmental_band"),
+    )
+
+    return {
+        "asd": {"raw": asd_raw, "summary": summarize_for_consumer(asd_raw)},
+        "speech_delay": {"raw": sd_raw, "summary": None},  # consumer view ships in Phase 4
+    }
 
 
 @app.get("/api/cases/{case_id}/summary")
 def summary(case_id: str) -> dict:
-    """Re-summarise a saved result without re-running the pipeline."""
+    """
+    Re-summarise saved results without re-running pipelines.
+    Returns {asd: <summary or None>, speech_delay: {raw: <raw or None>}}.
+    Speech-delay summary translator arrives in Phase 4.
+    """
     from core.asd_consumer_view import summarize_for_consumer
 
-    path = storage.result_path(case_id)
-    if not os.path.exists(path):
-        raise HTTPException(status_code=404, detail=f"No result saved for case {case_id}")
-    with open(path) as f:
-        raw = json.load(f)
-    return summarize_for_consumer(raw)
+    out: dict = {"asd": None, "speech_delay": None}
+
+    asd_path = storage.result_path(case_id)
+    if os.path.exists(asd_path):
+        with open(asd_path) as f:
+            out["asd"] = summarize_for_consumer(json.load(f))
+
+    sd_path = storage.speech_delay_result_path(case_id)
+    if os.path.exists(sd_path):
+        with open(sd_path) as f:
+            out["speech_delay"] = {"raw": json.load(f), "summary": None}
+
+    if out["asd"] is None and out["speech_delay"] is None:
+        raise HTTPException(status_code=404, detail=f"No saved results for case {case_id}")
+
+    return out
 
 
 @app.get("/api/cases/{case_id}/raw")
-def raw_result(case_id: str) -> FileResponse:
-    """Serve the saved asd_result.json as a downloadable file."""
-    path = storage.result_path(case_id)
+def raw_result(case_id: str, which: str = "asd") -> FileResponse:
+    """
+    Serve a saved result file as a download.
+
+    `which=asd` (default) → asd_result.json
+    `which=speech_delay`  → speech_delay_result.json
+    """
+    if which == "asd":
+        path = storage.result_path(case_id)
+        download_name = f"asd_result_{case_id}.json"
+    elif which == "speech_delay":
+        path = storage.speech_delay_result_path(case_id)
+        download_name = f"speech_delay_result_{case_id}.json"
+    else:
+        raise HTTPException(status_code=400, detail=f"which must be 'asd' or 'speech_delay', got {which!r}")
+
     if not os.path.exists(path):
-        raise HTTPException(status_code=404, detail=f"No result saved for case {case_id}")
-    return FileResponse(
-        path,
-        media_type="application/json",
-        filename=f"asd_result_{case_id}.json",
-    )
+        raise HTTPException(status_code=404, detail=f"No {which} result for case {case_id}")
+    return FileResponse(path, media_type="application/json", filename=download_name)

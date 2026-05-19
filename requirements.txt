@@ -11,5 +11,8 @@ fastapi
 uvicorn[standard]
 python-multipart
 
+# Speech delay pipeline — fuzzy word matching for ASR transcripts
+rapidfuzz
+
 # webrtcvad imports pkg_resources, which setuptools 81+ removed
 setuptools<81

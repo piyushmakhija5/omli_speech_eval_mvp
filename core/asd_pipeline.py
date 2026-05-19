@@ -527,6 +527,8 @@ def assess_asd_risk(
     all_audio_paths: list,
     child_age_months: int,
     prompt_end_ms_per_question: list = None,
+    *,
+    recording_quality: Optional[dict] = None,
 ) -> dict:
     """
     Full ASD risk assessment from a set of audio recordings.
@@ -536,6 +538,11 @@ def assess_asd_risk(
         all_audio_paths: list of all audio paths (ideally 12)
         child_age_months: child's age in months
         prompt_end_ms_per_question: prompt end timestamps per prompted question (None = push-to-talk)
+        recording_quality: optional map of audio_path -> RecordingQuality. When the
+            backend orchestrates ASD + speech_delay together it runs the quality
+            gate ONCE and passes the dict in here, avoiding double-processing the
+            same files. If None, the pipeline computes quality internally
+            (preserves standalone CLI / test use).
 
     Returns:
         dict with tier, message, biomarkers, group details, confidence, quality report
@@ -547,8 +554,17 @@ def assess_asd_risk(
     # ---- Phase 1: Quality assessment for ALL recordings ----
     logger.info(f"Assessing {len(all_audio_paths)} recordings for age group {age_group}")
 
-    all_quality = [assess_recording_quality(p) for p in all_audio_paths]
-    prompted_quality = [assess_recording_quality(p) for p in prompted_question_audio_paths]
+    if recording_quality is not None:
+        # Use shared quality results — verify every path is covered.
+        missing = [p for p in (set(all_audio_paths) | set(prompted_question_audio_paths))
+                   if p not in recording_quality]
+        if missing:
+            raise ValueError(f"recording_quality missing entries for: {missing}")
+        all_quality = [recording_quality[p] for p in all_audio_paths]
+        prompted_quality = [recording_quality[p] for p in prompted_question_audio_paths]
+    else:
+        all_quality = [assess_recording_quality(p) for p in all_audio_paths]
+        prompted_quality = [assess_recording_quality(p) for p in prompted_question_audio_paths]
 
     usable_all = [(p, q) for p, q in zip(all_audio_paths, all_quality) if q.usable]
     usable_prompted = [(p, q, ms) for (p, q), ms in

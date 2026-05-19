@@ -1,65 +1,77 @@
 {
-    "_README": "Placeholder questions used by the collector UI. Replace with final Omli question text. The pipeline treats the first 4 as 'prompted' (open-ended spontaneous speech). The remaining 8 are structured tasks (sentence repetition, naming, counting).",
+    "_README": "Placeholder questions used by the collector UI. Replace with final Omli question text. The pipeline treats the first 4 as 'prompted' (open-ended spontaneous speech). The remaining 8 are structured tasks (sentence repetition, naming, counting). `expected_text` is what the child is supposed to say — used by speech_delay's word_coverage and naming_accuracy metrics. Null for prompted (open-ended).",
     "questions": [
         {
             "id": 1,
             "type": "prompted",
-            "text": "Tell me about your favourite toy. What does it look like? What do you do with it?"
+            "text": "Tell me about your favourite toy. What does it look like? What do you do with it?",
+            "expected_text": null
         },
         {
             "id": 2,
             "type": "prompted",
-            "text": "What did you do today? Tell me about the things you did."
+            "text": "What did you do today? Tell me about the things you did.",
+            "expected_text": null
         },
         {
             "id": 3,
             "type": "prompted",
-            "text": "If you could go anywhere in the world, where would you go and why?"
+            "text": "If you could go anywhere in the world, where would you go and why?",
+            "expected_text": null
         },
         {
             "id": 4,
             "type": "prompted",
-            "text": "Tell me about your family. Who is in your family and what do they do?"
+            "text": "Tell me about your family. Who is in your family and what do they do?",
+            "expected_text": null
         },
         {
             "id": 5,
             "type": "sentence_repetition",
-            "text": "Repeat after me: \"The cat is sleeping on the mat.\""
+            "text": "Repeat after me: \"The cat is sleeping on the mat.\"",
+            "expected_text": "the cat is sleeping on the mat"
         },
         {
             "id": 6,
             "type": "sentence_repetition",
-            "text": "Repeat after me: \"My birthday is in the summer.\""
+            "text": "Repeat after me: \"My birthday is in the summer.\"",
+            "expected_text": "my birthday is in the summer"
         },
         {
             "id": 7,
             "type": "sentence_repetition",
-            "text": "Repeat after me: \"We went to the park yesterday.\""
+            "text": "Repeat after me: \"We went to the park yesterday.\"",
+            "expected_text": "we went to the park yesterday"
         },
         {
             "id": 8,
             "type": "sentence_repetition",
-            "text": "Repeat after me: \"I have a red ball and a blue car.\""
+            "text": "Repeat after me: \"I have a red ball and a blue car.\"",
+            "expected_text": "i have a red ball and a blue car"
         },
         {
             "id": 9,
             "type": "naming",
-            "text": "Say each word three times: \"apple, apple, apple\""
+            "text": "Say each word three times: \"apple, apple, apple\"",
+            "expected_text": "apple apple apple"
         },
         {
             "id": 10,
             "type": "naming",
-            "text": "Say each word three times: \"elephant, elephant, elephant\""
+            "text": "Say each word three times: \"elephant, elephant, elephant\"",
+            "expected_text": "elephant elephant elephant"
         },
         {
             "id": 11,
             "type": "naming",
-            "text": "Say each word three times: \"butterfly, butterfly, butterfly\""
+            "text": "Say each word three times: \"butterfly, butterfly, butterfly\"",
+            "expected_text": "butterfly butterfly butterfly"
         },
         {
             "id": 12,
             "type": "counting",
-            "text": "Count from one to ten."
+            "text": "Count from one to ten.",
+            "expected_text": "one two three four five six seven eight nine ten"
         }
     ]
 }

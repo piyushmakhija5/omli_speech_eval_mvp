@@ -82,4 +82,22 @@ def parse_created_at(case_id: str) -> str | None:
 
 
 def result_path(case_id: str) -> str:
+    """Saved ASD result JSON for a case."""
     return os.path.join(case_dir(case_id), "asd_result.json")
+
+
+def speech_delay_result_path(case_id: str) -> str:
+    """Saved speech-delay result JSON for a case."""
+    return os.path.join(case_dir(case_id), "speech_delay_result.json")
+
+
+# Maps questions.json `type` → speech_delay_pipeline `task_type`.
+# Counting collapses to prompted_question — it's a structured prompt but the
+# pipeline doesn't have a dedicated counting metric path; the transcript will
+# still feed naming-like coverage if expected_text is provided.
+QUESTION_TYPE_MAP = {
+    "prompted": "prompted_question",
+    "sentence_repetition": "sentence_repetition",
+    "naming": "picture_naming",
+    "counting": "prompted_question",
+}
