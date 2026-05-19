@@ -32,9 +32,15 @@ body {
 }
 
 main {
-    max-width: 680px;
+    max-width: 720px;
     margin: 0 auto;
     padding: 2rem 1.25rem 4rem;
+}
+
+/* When the result pane is visible we want to allow up to 1280px so the
+   two-column layout has breathing room. Other pages stay narrow. */
+main:has(#resultPane:not([hidden])) {
+    max-width: 1280px;
 }
 
 header h1 { margin: 0 0 0.25rem; font-size: 1.5rem; }
@@ -410,6 +416,123 @@ code {
     white-space: pre-wrap;
     word-break: break-word;
 }
+
+/* Sub-selector inside the Raw JSON tab: ASD raw / Speech-delay raw. */
+.raw-selector {
+    display: flex;
+    gap: 0.4rem;
+    margin-bottom: 0.75rem;
+}
+.raw-tab {
+    padding: 0.4rem 0.8rem;
+    font-size: 0.85rem;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    cursor: pointer;
+    color: var(--muted);
+}
+.raw-tab:hover { background: #f3f4f6; color: var(--fg); }
+.raw-tab.active {
+    background: var(--accent);
+    color: white;
+    border-color: var(--accent);
+    font-weight: 600;
+}
+
+/* =========================================================================
+   Two-column result grid (side-by-side ≥900px, stacked below)
+   ========================================================================= */
+
+.result-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 1.25rem;
+}
+@media (min-width: 900px) {
+    .result-grid { grid-template-columns: 1fr 1fr; }
+}
+
+.result-col {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 1.25rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.col-header {
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 0.75rem;
+    margin-bottom: 0.5rem;
+}
+.col-header h3 {
+    margin: 0 0 0.2rem;
+    font-size: 1.05rem;
+    color: var(--fg);
+}
+.col-header p {
+    margin: 0;
+    font-size: 0.8rem;
+    color: var(--muted);
+}
+
+.result-col .headline-text h2 {
+    font-size: 1.15rem; /* slightly smaller in narrower columns */
+}
+.result-col .meta-row { grid-template-columns: 1fr 1fr; }
+@media (max-width: 540px) { .result-col .meta-row { grid-template-columns: 1fr; } }
+
+.delay-label {
+    font-size: 0.85rem;
+    color: var(--fg);
+    opacity: 0.85;
+    margin: 0.55rem 0 0;
+}
+
+.domain-counts {
+    color: var(--muted);
+    font-family: ui-monospace, "SF Mono", monospace;
+    font-size: 0.75em;
+}
+
+/* Override the marker-group h4 to a quieter h5 in the per-column details. */
+.marker-group-header h5 {
+    margin: 0;
+    font-size: 0.92rem;
+    font-weight: 600;
+}
+
+.mode-note {
+    color: var(--muted);
+    font-size: 0.78rem;
+    font-style: italic;
+}
+
+/* =========================================================================
+   Case list: stacked pills per row, with two screenings shown
+   ========================================================================= */
+
+.case-link {
+    /* Override the prior 4-column grid to: (date+meta) | (pills) | chev */
+    grid-template-columns: 1fr auto 1rem;
+}
+
+.case-when-meta {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+}
+
+.case-pills {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    align-items: flex-end;
+}
+.case-pills .case-pill { font-size: 0.7rem; padding: 0.12rem 0.5rem; }
 
 /* =========================================================================
    Speech-pattern stamp under the headline
