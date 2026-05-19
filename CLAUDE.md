@@ -1,86 +1,158 @@
-# CLAUDE.md — Omli ASD Pipeline
+# CLAUDE.md — Omli Speech Screening
 
 ## What this is
 
-ASD (Autism Spectrum Disorder) risk detection pipeline for children aged 3-8. Extracts acoustic biomarkers from speech recordings and produces a tiered risk classification. Part of a larger Omli speech assessment system that also includes speech delay detection (not built yet).
+Two speech-screening pipelines for children aged 3-8, sharing one 12-recording
+voice session:
+
+1. **ASD pipeline** — acoustic biomarkers across 4 groups (prosody, spectral,
+   interaction, voice stability). Tiered output. No ASR dependency.
+2. **Speech-delay pipeline** — 10 metrics across 3 domains (articulation,
+   language, fluency). Percentile-based output with developmental band + delay
+   status. ASR + pronunciation scoring are optional inputs (production wires
+   Sarvam + Whisper-base in a deferred Phase L).
+
+Both pipelines reuse shared audio primitives from `core/audio_analysis.py`:
+quality gate, audio loading, pitch extraction, voice stability, pause
+distribution, voice_check. Quality assessment runs ONCE per recording in the
+backend and the result dict is passed to both pipelines.
 
 ## How it works
 
-Child completes a 12-question voice assessment via the Omli app. 4 questions are "prompted questions" (open-ended, child speaks freely), 8 are structured tasks (sentence repetition, picture naming). The ASD pipeline:
+Child completes a 12-question voice assessment via the Omli app. 4 prompted
+(open-ended) + 4 sentence repetition + 3 picture naming + 1 counting. Each
+recording is paired with a `task_type` and `expected_text` derived from
+`data/questions.json`.
 
-1. Quality-checks each audio recording (SNR, clipping, duration, speech presence)
-2. Extracts acoustic biomarkers from raw audio (no ASR/transcription needed)
-3. Compares each biomarker to age-adjusted norms
-4. Groups biomarkers into 4 groups (prosody, spectral, interaction, voice stability)
-5. Counts how many groups are atypical → produces tiered risk output
+Per recording: quality-check (SNR, clipping, duration, speech presence).
+Quality results are shared between both pipelines (no double-processing).
 
-All metrics are language-independent. Works identically for English, Hindi, and Hinglish.
+**ASD pipeline:** extracts acoustic biomarkers → compares to age-adjusted
+norms (mean ± SD) → groups by domain → counts atypical groups → tier output
+(`no_indicators` / `monitor` / `recommend_evaluation` / `insufficient_data`).
+
+**Speech-delay pipeline:** computes 10 metrics (5 from acoustic, 4 from
+ASR/pronunciation inputs, 1 dual-mode). Each metric → percentile via age-norm
+table lookup. Domain averages → composite (lowest_domain by default). Status
+mapped via percentile thresholds (`on_track` ≥ 25, `behind` ≥ 10, else
+`significantly_behind`). Developmental band mapping uses articulation +
+language only.
+
+All metrics designed to be language-independent. Voice_check (shared between
+pipelines) flags adult voices via `CHILD_PITCH_NORMS` in `audio_analysis.py`.
 
 ## Files
 
 ```
-core/asd_pipeline.py        # Main pipeline. Single entry point: assess_asd_risk()
-core/asd_config.json        # All thresholds, age norms, quality gates. Edit this, not the code.
-tests/test_asd_pipeline.py  # Test script. Run with: python -m tests.test_asd_pipeline
-backend/                    # FastAPI collector server (records 12 voice samples → data/cases/)
-frontend/                   # Single-page collector UI served by backend/
-data/questions.json         # Question text shown by the collector
-data/cases/<case_id>/       # Collected sessions, q01.wav … q12.wav (gitignored)
-data/synthetic/             # Synthetic test audio (gitignored)
-README.md                   # Setup and usage docs
-```
+core/audio_analysis.py            # Shared primitives — quality gate, audio loaders,
+                                  # extract_pitch_metrics, extract_voice_stability,
+                                  # extract_pause_distribution, compute_voice_check,
+                                  # CHILD_PITCH_NORMS constant (single source of truth)
 
-ASD-specific files keep the `asd_` prefix. A future speech-delay pipeline will live
-alongside as `core/speech_delay_pipeline.py` + `core/speech_delay_config.json` and
-share the same `data/cases/` recordings.
+core/asd_pipeline.py              # ASD-specific extractors (spectral entropy, LTAS,
+                                  # response latency), group convergence, tier mapping.
+                                  # Entry: assess_asd_risk(prompted, all, age, recording_quality=None)
+core/asd_config.json              # ASD norms (mean/std per metric per age group)
+core/asd_consumer_view.py         # ASD raw → consumer summary translator
+
+core/speech_delay_pipeline.py     # 10 metrics, percentile lookup, lowest-domain composition,
+                                  # compute_developmental_band, voice_check via shared helper.
+                                  # Entry: assess_speech_delay(recordings, age, recording_quality=None)
+core/speech_delay_config.json     # Percentile tables (p10/p25/p50/p75/p90) + connected_pcc_offset
+                                  # per age group, delay_thresholds, fuzzy_match_threshold
+core/speech_delay_consumer_view.py # Speech-delay raw → consumer summary translator
+
+backend/server.py                 # FastAPI. /assess runs BOTH pipelines from a single
+                                  # quality pass, saves two result files, returns combined
+                                  # {asd, speech_delay} response
+backend/storage.py                # File paths, case_id validation, QUESTION_TYPE_MAP
+
+frontend/index.html               # Two-column result viewer (≥900px); stacked below
+frontend/recorder.js              # Mic capture, both summary renderers, percentile-bar SVG
+frontend/styles.css               # Tier-coloured tokens, charts, responsive layout
+
+data/questions.json               # 12 question prompts + expected_text per non-prompted item
+data/cases/<case_id>/             # Collected sessions + asd_result.json + speech_delay_result.json
+data/synthetic/                   # Sine-wave WAVs for tests (gitignored)
+
+tests/test_asd_pipeline.py        # ASD CLI runner (synthetic or real audio)
+tests/test_composition.py         # 36 unit tests — pure functions: percentile lookup, compose,
+                                  # band mapping, validation
+tests/test_speech_delay_pipeline.py # 13 scenario tests with synthetic audio + mocked ASR
+```
 
 ## Architecture decisions
 
-- **Config separated from code.** All norms and thresholds live in `asd_config.json`. Adding a new age group or changing thresholds requires zero code changes. The pipeline has `reload_config()` for runtime swaps.
-- **Every metric returns a `MetricResult` object**, not a raw float. This distinguishes "computed and the value is 0" from "couldn't compute because audio was too short." Never return None silently.
-- **Per-recording quality gate** runs before any metric extraction. Recordings are flagged (low_snr, clipped, too_short, silence_only, corrupt) and marked usable/not-usable. Pipeline continues with usable recordings only.
-- **Graceful degradation.** If 3 of 4 prompted questions fail quality checks, pipeline still runs on the 1 usable recording but reports low confidence. If fewer than 3 biomarker groups are computable, output is `insufficient_data` rather than a potentially wrong tier.
-- **Group-level convergence, not individual markers.** 4 groups: prosody, spectral, interaction, voice_stability. Multiple atypical markers within the same group count as 1. Prevents correlated markers (e.g., pitch variability + pitch range) from double-counting. 3+ atypical groups → recommend_evaluation.
+- **Config separated from code.** Each pipeline owns a JSON config — `core/asd_config.json` and `core/speech_delay_config.json`. Both reload at runtime via `reload_config()`.
+- **Quality assessed ONCE per case.** Backend calls `assess_recording_quality` per WAV and passes the dict to both pipelines via the `recording_quality` kwarg. Pipelines fall back to internal computation when called standalone (tests + CLI).
+- **`CHILD_PITCH_NORMS` is a module constant**, not in config. Both pipelines call `compute_voice_check` from `audio_analysis.py` — voice_check cannot drift between them.
+- **Pipelines are STT-consumers, not STT-producers.** Speech_delay receives `asr_transcript_clean` (Sarvam) and `asr_transcript_raw` (Whisper-base) as per-recording inputs. Backend wires the ASR calls in deferred Phase L; production code shares Sarvam + Whisper-base infrastructure.
+- **Every metric returns a `MetricResult` object.** Distinguishes "computed and value is 0" from "couldn't compute because input was missing". Never returns None silently.
+- **Graceful degradation everywhere.** Missing ASR → 4 speech-delay metrics report `computed=false` with explicit reason; pipeline still produces a fluency-domain composite. If articulation + language are both uncomputable, `developmental_band="insufficient_data"` rather than fabricating a delay from fluency alone.
+- **Lowest-domain composition** for speech delay. A severe articulation deficit can't be masked by good fluency — composite picks the worst domain.
+- **Developmental band uses articulation + language only.** Fluency varies for reasons unrelated to language acquisition (microphone, mood) and would dilute band signal.
+- **Delay months rounded to 6-month buckets** (half-up — 15→18). Honest precision given norms are provisional.
+- **Side-by-side UI** at ≥900px (clinical-report layout); stacks on phones.
 
 ## Key types
 
 ```python
-RiskTier: "no_indicators" | "monitor" | "recommend_evaluation" | "insufficient_data"
-QualityFlag: "good" | "low_snr" | "clipped" | "too_short" | "silence_only" | "corrupt"
-RecordingQuality: per-recording quality assessment (path, duration, snr, flags, usable, rejection_reason)
-MetricResult: wrapper for computed metrics (value, computed: bool, reason: str if failed)
+# In core/audio_analysis.py (used by both pipelines):
+RecordingQuality   # path, duration, snr, flags, usable, rejection_reason
+MetricResult       # value, computed: bool, reason: str if not computed
+QualityFlag        # good | low_snr | clipped | too_short | silence_only | corrupt
+CHILD_PITCH_NORMS  # {"3-4": {mean, std}, ...} — voice_check reference
+
+# In core/asd_pipeline.py:
+RiskTier           # no_indicators | monitor | recommend_evaluation | insufficient_data
+
+# In core/speech_delay_pipeline.py:
+DelayStatus        # on_track | behind | significantly_behind | insufficient_data
+DOMAINS            # {"articulation": [...], "language": [...], "fluency": [...]}
 ```
 
-## Biomarker groups
+## Speech-delay metrics (10 total)
 
-| Group | Markers | Primary source |
-|-------|---------|---------------|
-| Prosody | Pitch variability (F0 std), pitch range (F0 max-min) | Prompted questions |
-| Spectral | Spectral entropy, LTAS slope | Prompted questions |
-| Interaction | Response latency, turn-taking timing pattern | Prompted questions |
-| Voice stability | Jitter, shimmer, HNR, pause variance | All 12 recordings |
+| Domain | Metric | Source / needs |
+|--------|--------|----------------|
+| Articulation | `single_word_pcc` | `pronunciation_scores.overall_score` on picture-naming recordings |
+| Articulation | `connected_pcc` | Same on sentence-repetition. Looked up against `single_word_pcc` norm table + `connected_pcc_offset` per age group |
+| Language | `word_coverage` | `asr_transcript_clean` + `expected_text` on repetition; fuzzy match via rapidfuzz ≥75 |
+| Language | `naming_accuracy` | Same on naming |
+| Fluency | `speaking_rate` | `asr_transcript_raw` (Whisper preserves disfluencies); falls back to `_clean` with `mode="asr_words_clean_fallback"` and an unreliability note |
+| Fluency | `pause_ratio` | webrtcvad on each usable recording, averaged |
+| Fluency | `pitch_mean` | librosa pyin, averaged |
+| Fluency | `jitter` | Praat/Parselmouth, averaged |
+| Fluency | `shimmer` | Praat/Parselmouth, averaged |
+| Fluency | `hnr` | Praat/Parselmouth, averaged |
 
 ## Dependencies
 
 ```
-librosa          # audio loading, pitch (pyin), STFT, spectral features
-praat-parselmouth # jitter, shimmer, HNR
-webrtcvad        # voice activity detection, pause analysis
-scipy            # spectral entropy (welch + Shannon entropy)
-numpy            # everything
-soundfile        # test audio generation only
+librosa             # audio loading, pitch (pyin), STFT, spectral features
+praat-parselmouth   # jitter, shimmer, HNR
+webrtcvad           # VAD, pause analysis
+scipy               # spectral entropy (welch + Shannon)
+numpy               # numerics
+soundfile           # synthetic audio generation for tests
+rapidfuzz           # fuzzy word matching for word_coverage / naming_accuracy
+fastapi             # backend
+uvicorn[standard]   # ASGI server
+python-multipart    # form uploads
+setuptools<81       # webrtcvad needs pkg_resources (removed in 81)
 ```
 
 ## Running tests
 
 ```bash
-# Synthetic audio (no real recordings needed)
+# Composition + scenario tests (unittest)
+python -m unittest discover tests
+
+# ASD CLI runner (synthetic audio)
 python -m tests.test_asd_pipeline
 
-# Real recordings
+# Run pipeline on a real case folder
 python -m tests.test_asd_pipeline --audio-dir ./data/cases/<case_id> --age 60
-
-# age is in months (60 = 5 years)
 ```
 
 ## Collecting samples
@@ -89,86 +161,104 @@ python -m tests.test_asd_pipeline --audio-dir ./data/cases/<case_id> --age 60
 uvicorn backend.server:app --reload   # http://localhost:8000
 ```
 
-Each session writes `data/cases/<case_id>/q01.wav` … `q12.wav` — feed that folder
-straight to `tests.test_asd_pipeline --audio-dir`.
+Each session: `data/cases/<case_id>/q01.wav … q12.wav` + (after assess) two
+result JSONs. The browser viewer shows both screenings side-by-side at ≥900px.
 
 ## Target age band
 
-This pipeline is calibrated for **children aged 3-8** (36-107 months). The only age
-groups defined are `3-4`, `5-6`, `7-8`. We do not plan to support 0-2, 9+, or adult
-voices in this codebase — those are different screening problems with different
-markers.
+Calibrated for **3-8 years** (36-107 months). Age groups: `3-4`, `5-6`, `7-8`. No
+plans for 0-2, 9+, or adult voices.
 
-Out-of-band voices (e.g. a parent recording instead of the child) are caught by
-the `voice_check` field in the result: if mean F0 is more than
-`atypical_threshold_sd` SDs below the age-group `pitch_mean` norm, `likely_child`
-is set to `false` with a human-readable reason. The tier is NOT overridden — both
-values are returned so the caller can decide. See `compute_voice_check()` in
-`core/asd_pipeline.py`.
+Out-of-band voices are flagged via `voice_check` in BOTH pipeline outputs — both
+call the same `compute_voice_check()` against `CHILD_PITCH_NORMS`. Tier is NOT
+overridden; the caller decides. Consumer views render the "Adult voice
+identified" warning as an alert + the first item in `next_steps`.
 
 ## Language independence
 
-All metrics are acoustic (pitch, spectral shape, jitter/shimmer/HNR, VAD-based
-timing) and do not depend on phonology, so the pipeline is designed to work
-identically across English, Hindi, and Hinglish. **No language detection or
-language-specific code anywhere — recordings can mix languages within a single
-session.** Case `20260518-221449-15da` is a mixed Hindi/Hinglish/English session
-that ran through the full pipeline cleanly; informal evidence that the
-language-independent claim holds. Formal cross-language validation is still TODO.
+Acoustic metrics are language-agnostic. Speech-delay's `word_coverage` and
+`naming_accuracy` use fuzzy matching that works cross-language as long as ASR
+returns reasonable transcripts (Sarvam is Indic-trained, code-mix-capable).
+Speaking_rate's syllable-to-word conversion is language-dependent — when ASR is
+absent the `syllables_per_word_default` (1.85) is the midpoint of English (1.5)
+and Hindi (~2.2); mode flagged `acoustic_estimate_unreliable`.
+
+Case `20260518-221449-15da` is a mixed Hindi/Hinglish/English session — informal
+validation that pipeline runs cleanly on mixed-language input. Formal cross-
+language validation is still TODO.
 
 ## What's provisional / needs calibration
 
-ALL age-adjusted norms in `core/asd_config.json` are educated guesses from
-published research on Western, English-speaking children. They have NOT been
-validated on:
-- Hindi-speaking children
-- Indian English-speaking children
-- Children in noisy home environments (mobile recordings)
+ALL norms in BOTH config files are educated guesses from published research on
+Western, English-speaking children. Result JSONs include `"calibration_status":
+"provisional"` to remind consumers. Both consumer views render a provisional-
+norms info banner.
 
-The code will produce valid numbers. Whether those numbers, compared against
-these thresholds, produce correct ASD classifications is what SLP validation
-will determine. Expect the numbers in the config to change significantly after
-calibration.
+## What's NOT in this pipeline (yet)
 
-## What's NOT in this pipeline
+- **ASR + pronunciation integration in backend** — Phase L, deferred. Production
+  uses Sarvam (saaras:v3) primary + Whisper-base secondary; backend will wrap
+  both in `backend/asr.py` and populate `asr_transcript_clean` / `asr_transcript_raw`
+  per recording before invoking speech_delay. Until then, 4 speech-delay metrics
+  report `computed=false`.
+- **Parent behavioral questions** — M-CHAT-R style. Deferred.
+- **Two-session confirmation** — app-level logic, not pipeline.
+- **Atomic write across both result files** — backend writes them sequentially;
+  if it crashes between, case is in inconsistent state. Re-run button is the
+  recovery path. Acceptable for v1.
+- **Parallel pipeline execution** — currently sequential (~20s for both
+  pipelines). Future: asyncio.gather once Whisper is async-wrapped.
 
-- **Speech delay detection** — separate pipeline, not built yet. Will share the same audio recordings.
-- **Parent behavioral questions** — 3-5 M-CHAT-R style questions. Deferred for v1.
-- **Two-session confirmation** — app-level logic, not in the scoring pipeline.
-- **ASR/transcription** — deliberately excluded. All metrics are raw audio. This is by design.
-
-## Coding conventions in this codebase
+## Coding conventions
 
 - Type hints on all function signatures
-- Every extraction function handles its own errors and returns a MetricResult with a reason on failure — never raises to caller
-- Logging via Python `logging` module, logger name is `asd_pipeline`
+- Every extractor returns `MetricResult` with `reason` on failure — never raises
+- Logging via `logging` module; loggers `asd_pipeline`, `speech_delay_pipeline`,
+  `audio_analysis`, `collector`
 - No silent failures. If something can't be computed, the output says why.
-- Dataclasses for structured data (RecordingQuality, MetricResult)
-- Enums for categorical values (RiskTier, QualityFlag)
+- Dataclasses for structured data; enums for categorical values
+- Per-pipeline configs in JSON, runtime-reloadable
+- Shared helpers go in `core/audio_analysis.py`; pipeline-specific stays in its own module
+- Consumer-facing copy lives in `*_consumer_view.py` — single source of truth for tier
+  labels, plain-language descriptions, alert text. UI is dumb rendering.
 
 ## Common tasks
 
-**Change a threshold:** Edit `core/asd_config.json`. No code change needed.
+**Change a threshold:** Edit the relevant `*_config.json`. No code change needed.
 
-**Add an age group:** Add entry to `age_groups` in `core/asd_config.json` with `age_range_months` and all norm values.
+**Add an age group (e.g. 9-12):**
+1. Add to `age_groups` in BOTH configs.
+2. Add corresponding entry to `CHILD_PITCH_NORMS` in `core/audio_analysis.py`.
+3. (Optional) update consumer view if labels need to change.
 
-**Add a new biomarker:**
-1. Write extraction function in `core/asd_pipeline.py` returning `MetricResult`
-2. Add norm values to all age groups in `core/asd_config.json`
-3. Add to the appropriate group in `evaluate_biomarker_groups()`
-4. The convergence and tiering logic handles it automatically
+**Add a new ASD biomarker:**
+1. Write extractor in `core/asd_pipeline.py` returning `MetricResult`.
+2. Add norm values to all age groups in `core/asd_config.json`.
+3. Add to the appropriate group in `evaluate_biomarker_groups()`.
+4. Convergence and tiering handle it automatically.
+5. Add `MARKER_DEFS` entry in `core/asd_consumer_view.py` for the chart.
 
-**Integrate with Omli backend:**
+**Add a new speech-delay metric:**
+1. Add per-metric extraction in `assess_speech_delay()`.
+2. Add metric → norm-table mapping in `_NORM_KEY_BY_METRIC`.
+3. Add the metric to its domain in `DOMAINS`.
+4. Add norms to all age groups in `core/speech_delay_config.json`.
+5. Add `METRIC_DISPLAY` entry in `core/speech_delay_consumer_view.py`.
+6. Composition + percentile lookup handle the rest.
+
+**Integrate with Omli backend (server-side use):**
 ```python
+from core.audio_analysis import assess_recording_quality
 from core.asd_pipeline import assess_asd_risk
+from core.speech_delay_pipeline import assess_speech_delay
 
-# After child completes 12-question session:
-result = assess_asd_risk(
-    prompted_question_audio_paths=[path1, path2, path3, path4],
-    all_audio_paths=[path1, ..., path12],
-    child_age_months=child.age_months,
-)
-# result["tier"] → store in database
-# result["confidence"] → show on dashboard
-# result["quality_report"] → flag bad recordings for re-collection
+# One quality pass shared between pipelines
+quality = {p: assess_recording_quality(p) for p in audio_paths}
+
+asd = assess_asd_risk(prompted, audio_paths, child.age_months, recording_quality=quality)
+sd = assess_speech_delay(recordings_with_asr, child.age_months, recording_quality=quality)
+
+# asd["tier"], sd["delay_status"] → store in database
+# asd["confidence"]["confidence_score"], sd["confidence"]["confidence_score"] → dashboard
+# Both quality_reports → flag bad recordings for re-collection
 ```
