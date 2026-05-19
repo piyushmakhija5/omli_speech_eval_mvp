@@ -346,12 +346,53 @@ function renderRaw(raw) {
     $("rawJson").textContent = JSON.stringify(raw, null, 2);
 }
 
+let _lastRerunAt = null;
+let _rerunTickInterval = null;
+
+function setReassessStatus(text, state) {
+    const el = $("reassessStatus");
+    el.textContent = text;
+    el.dataset.state = state;  // "running" | "success" | "error"
+    el.hidden = false;
+}
+
+function clearRerunTicker() {
+    if (_rerunTickInterval) {
+        clearInterval(_rerunTickInterval);
+        _rerunTickInterval = null;
+    }
+}
+
+function tickRerunStatus() {
+    if (!_lastRerunAt) return;
+    const ageS = Math.round((Date.now() - _lastRerunAt) / 1000);
+    let label;
+    if (ageS < 5) label = "just now";
+    else if (ageS < 60) label = `${ageS} seconds ago`;
+    else if (ageS < 3600) label = `${Math.round(ageS / 60)} min ago`;
+    else {
+        clearRerunTicker();
+        label = `at ${new Date(_lastRerunAt).toLocaleTimeString()}`;
+    }
+    setReassessStatus(`✓ Re-ran ${label} — biomarkers refreshed.`, "success");
+}
+
+function flashResults() {
+    const target = $("summaryView");
+    target.classList.remove("flash");
+    // Force reflow so the animation restarts even on repeat triggers.
+    void target.offsetWidth;
+    target.classList.add("flash");
+}
+
 async function reassess() {
     if (!state.caseId) return;
     const ageMonths = state.ageMonths || 60;
     $("reassessBtn").disabled = true;
     const originalText = $("reassessBtn").textContent;
     $("reassessBtn").textContent = "Re-running…";
+    clearRerunTicker();
+    setReassessStatus("Re-running pipeline… (this can take 10–30 seconds)", "running");
 
     try {
         const fd = new FormData();
@@ -359,11 +400,17 @@ async function reassess() {
         const r = await fetch(`/api/cases/${state.caseId}/assess`, { method: "POST", body: fd });
         const data = await r.json();
         if (!r.ok) {
-            alert(`Re-assess failed: ${data.detail || r.statusText}`);
+            setReassessStatus(`✗ Re-run failed: ${data.detail || r.statusText}`, "error");
             return;
         }
         renderSummary(data.summary);
         renderRaw(data.raw);
+        flashResults();
+        _lastRerunAt = Date.now();
+        tickRerunStatus();
+        _rerunTickInterval = setInterval(tickRerunStatus, 5000);
+    } catch (e) {
+        setReassessStatus(`✗ Re-run failed: ${e.message}`, "error");
     } finally {
         $("reassessBtn").disabled = false;
         $("reassessBtn").textContent = originalText;

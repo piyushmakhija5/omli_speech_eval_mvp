@@ -278,6 +278,30 @@ code {
     font-style: italic;
 }
 
+/* Re-run feedback */
+.reassess-status {
+    margin: 0.6rem 0 0;
+    font-size: 0.85rem;
+    font-family: ui-monospace, "SF Mono", monospace;
+    color: var(--muted);
+    transition: opacity 0.25s ease;
+}
+.reassess-status[data-state="running"] { color: var(--accent); }
+.reassess-status[data-state="success"] { color: var(--green-fg); }
+.reassess-status[data-state="error"]   { color: var(--red-fg); }
+
+/* Flash highlight applied to #summaryView after a successful re-run.
+   Brief brightness + scale pulse so the eye notices the refresh even when
+   the values are unchanged. */
+@keyframes resultFlash {
+    0%   { background: var(--card); }
+    20%  { background: #eff6ff; }   /* light blue tint */
+    100% { background: var(--card); }
+}
+#summaryView.flash {
+    animation: resultFlash 0.9s ease-out;
+}
+
 /* =========================================================================
    Previous cases list
    ========================================================================= */

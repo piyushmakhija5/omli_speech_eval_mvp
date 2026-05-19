@@ -61,7 +61,7 @@ def create_case() -> dict:
 @app.get("/api/cases")
 def list_cases() -> list[dict]:
     """List all cases on disk (newest first) with light summary metadata."""
-    from core.consumer_view import summarize_for_consumer
+    from core.asd_consumer_view import summarize_for_consumer
 
     out = []
     for case_id in storage.list_case_ids():
@@ -113,7 +113,7 @@ async def upload(case_id: str, q: int = Form(...), file: UploadFile = File(...))
 def assess(case_id: str, child_age_months: int = Form(66)) -> dict:
     # Import here so server boots fast even if librosa/Praat are slow to import.
     from core.asd_pipeline import assess_asd_risk
-    from core.consumer_view import summarize_for_consumer
+    from core.asd_consumer_view import summarize_for_consumer
 
     wavs = storage.list_wavs(case_id)
     if len(wavs) < 4:
@@ -141,7 +141,7 @@ def assess(case_id: str, child_age_months: int = Form(66)) -> dict:
 @app.get("/api/cases/{case_id}/summary")
 def summary(case_id: str) -> dict:
     """Re-summarise a saved result without re-running the pipeline."""
-    from core.consumer_view import summarize_for_consumer
+    from core.asd_consumer_view import summarize_for_consumer
 
     path = storage.result_path(case_id)
     if not os.path.exists(path):

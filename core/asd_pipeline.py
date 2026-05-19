@@ -18,24 +18,33 @@ Usage:
 
 import logging
 import os
-from dataclasses import dataclass, field
+import struct
 from enum import Enum
 from typing import Optional
 
 import numpy as np
 import librosa
-import parselmouth
-from parselmouth.praat import call
+import webrtcvad
 from scipy.signal import welch
 from scipy.stats import entropy
-import webrtcvad
-import struct
+
+from core.audio_analysis import (
+    MetricResult,
+    QualityFlag,
+    RecordingQuality,
+    _load_audio_safe,
+    assess_recording_quality as _assess_recording_quality,
+    compute_voice_check as _compute_voice_check_shared,
+    extract_pause_distribution as _extract_pause_distribution,
+    extract_pitch_metrics as _extract_pitch_metrics,
+    extract_voice_stability as _extract_voice_stability,
+)
 
 logger = logging.getLogger("asd_pipeline")
 
 
 # =============================================================================
-# ENUMS & DATA CLASSES
+# ENUMS
 # =============================================================================
 
 class RiskTier(str, Enum):
@@ -43,37 +52,6 @@ class RiskTier(str, Enum):
     MONITOR = "monitor"
     RECOMMEND_EVALUATION = "recommend_evaluation"
     INSUFFICIENT_DATA = "insufficient_data"
-
-
-class QualityFlag(str, Enum):
-    GOOD = "good"
-    LOW_SNR = "low_snr"
-    CLIPPED = "clipped"
-    TOO_SHORT = "too_short"
-    SILENCE_ONLY = "silence_only"
-    CORRUPT = "corrupt"
-    SAMPLE_RATE_MISMATCH = "sample_rate_mismatch"
-
-
-@dataclass
-class RecordingQuality:
-    """Quality assessment for a single audio recording."""
-    path: str
-    duration_s: float = 0.0
-    snr_db: float = 0.0
-    clipping_ratio: float = 0.0
-    speech_ratio: float = 0.0
-    flags: list = field(default_factory=list)
-    usable: bool = True
-    rejection_reason: Optional[str] = None
-
-
-@dataclass
-class MetricResult:
-    """Wrapper for a computed metric — distinguishes 'computed' from 'failed' from 'insufficient data'."""
-    value: Optional[float] = None
-    computed: bool = False
-    reason: Optional[str] = None  # why it wasn't computed
 
 
 # =============================================================================
@@ -123,7 +101,8 @@ def _load_config(config_path: str = None) -> dict:
         "pause_variance_threshold": scoring.get("pause_variance_threshold", 50000),
 
         # Age norms (restructured from age_groups)
-        "pitch_mean_norms": {},
+        # NOTE: pitch_mean norms live in core.audio_analysis.CHILD_PITCH_NORMS — both
+        # ASD and speech_delay share that constant so voice_check can't drift.
         "pitch_variability_norms": {},
         "pitch_range_norms": {},
         "spectral_entropy_norms": {},
@@ -136,7 +115,6 @@ def _load_config(config_path: str = None) -> dict:
     }
 
     for group_name, group_data in age_groups.items():
-        config["pitch_mean_norms"][group_name] = group_data.get("pitch_mean", {"mean": 275, "std": 28})
         config["pitch_variability_norms"][group_name] = group_data.get("pitch_variability", {"mean": 50, "std": 15})
         config["pitch_range_norms"][group_name] = group_data.get("pitch_range", {"mean": 150, "std": 45})
         config["spectral_entropy_norms"][group_name] = group_data.get("spectral_entropy", {"mean": 0.72, "std": 0.09})
@@ -159,7 +137,7 @@ def _default_config() -> dict:
         "min_duration_s": 3.0, "target_sr": 16000, "min_total_spontaneous_s": 10.0,
         "min_usable_prompted": 2, "min_usable_total": 6, "min_voiced_frames": 10,
         "atypical_threshold_sd": 2.0, "turn_taking_cv_threshold": 0.5, "pause_variance_threshold": 50000,
-        "pitch_mean_norms": {"3-4": {"mean": 295, "std": 28}, "5-6": {"mean": 275, "std": 28}, "7-8": {"mean": 245, "std": 28}},
+        # pitch_mean norms live in core.audio_analysis.CHILD_PITCH_NORMS
         "pitch_variability_norms": {"3-4": {"mean": 65, "std": 18}, "5-6": {"mean": 50, "std": 15}, "7-8": {"mean": 42, "std": 12}},
         "pitch_range_norms": {"3-4": {"mean": 180, "std": 50}, "5-6": {"mean": 150, "std": 45}, "7-8": {"mean": 120, "std": 40}},
         "spectral_entropy_norms": {"3-4": {"mean": 0.75, "std": 0.10}, "5-6": {"mean": 0.72, "std": 0.09}, "7-8": {"mean": 0.70, "std": 0.08}},
@@ -185,181 +163,36 @@ CONFIG = _load_config()
 
 
 # =============================================================================
-# AUDIO QUALITY ASSESSMENT
+# ASD-SCOPED WRAPPERS for shared extractors — feed audio_analysis primitives
+# their tunables from ASD's CONFIG so call sites stay compact.
 # =============================================================================
 
 def assess_recording_quality(audio_path: str) -> RecordingQuality:
-    """
-    Assess quality of a single audio recording.
-    Returns a RecordingQuality object with flags and usability decision.
-    """
-    quality = RecordingQuality(path=audio_path)
+    return _assess_recording_quality(
+        audio_path,
+        target_sr=CONFIG["target_sr"],
+        min_snr_db=CONFIG["min_snr_db"],
+        max_clipping_ratio=CONFIG["max_clipping_ratio"],
+        min_speech_ratio=CONFIG["min_speech_ratio"],
+        min_duration_s=CONFIG["min_duration_s"],
+    )
 
-    # Check file exists
-    if not os.path.exists(audio_path):
-        quality.usable = False
-        quality.rejection_reason = f"File not found: {audio_path}"
-        quality.flags.append(QualityFlag.CORRUPT)
-        logger.error(quality.rejection_reason)
-        return quality
-
-    # Try loading
-    try:
-        y, sr = librosa.load(audio_path, sr=CONFIG["target_sr"])
-    except Exception as e:
-        quality.usable = False
-        quality.rejection_reason = f"Failed to load audio: {e}"
-        quality.flags.append(QualityFlag.CORRUPT)
-        logger.error(quality.rejection_reason)
-        return quality
-
-    if len(y) == 0:
-        quality.usable = False
-        quality.rejection_reason = "Empty audio file"
-        quality.flags.append(QualityFlag.CORRUPT)
-        logger.warning(quality.rejection_reason)
-        return quality
-
-    quality.duration_s = len(y) / sr
-
-    # Duration check
-    if quality.duration_s < CONFIG["min_duration_s"]:
-        quality.flags.append(QualityFlag.TOO_SHORT)
-        quality.usable = False
-        quality.rejection_reason = f"Too short: {quality.duration_s:.1f}s < {CONFIG['min_duration_s']}s"
-        logger.warning(f"{audio_path}: {quality.rejection_reason}")
-        return quality
-
-    # SNR estimation (signal vs noise in non-speech regions)
-    rms_signal = np.sqrt(np.mean(y ** 2))
-    if rms_signal < 1e-10:
-        quality.flags.append(QualityFlag.SILENCE_ONLY)
-        quality.usable = False
-        quality.rejection_reason = "No detectable signal (silence only)"
-        logger.warning(f"{audio_path}: {quality.rejection_reason}")
-        return quality
-
-    # Estimate noise from the quietest 10% of frames
-    frame_length = int(sr * 0.025)
-    hop_length = int(sr * 0.010)
-    frames = librosa.util.frame(y, frame_length=frame_length, hop_length=hop_length)
-    frame_rms = np.sqrt(np.mean(frames ** 2, axis=0))
-    noise_floor = np.percentile(frame_rms, 10)
-    snr = 20 * np.log10(rms_signal / (noise_floor + 1e-12))
-    quality.snr_db = float(snr)
-
-    if snr < CONFIG["min_snr_db"]:
-        quality.flags.append(QualityFlag.LOW_SNR)
-        logger.warning(f"{audio_path}: Low SNR ({snr:.1f} dB)")
-        # Low SNR is a warning, not automatic rejection — metrics may still be usable
-
-    # Clipping detection
-    max_amplitude = np.max(np.abs(y))
-    clipping_threshold = 0.99 * max_amplitude if max_amplitude > 0.5 else 0.99
-    clipping_ratio = np.mean(np.abs(y) > clipping_threshold)
-    quality.clipping_ratio = float(clipping_ratio)
-
-    if clipping_ratio > CONFIG["max_clipping_ratio"]:
-        quality.flags.append(QualityFlag.CLIPPED)
-        quality.usable = False
-        quality.rejection_reason = f"Audio clipped ({clipping_ratio * 100:.1f}% samples)"
-        logger.warning(f"{audio_path}: {quality.rejection_reason}")
-        return quality
-
-    # Speech ratio via VAD
-    try:
-        speech_ratio = _compute_speech_ratio(y, sr)
-        quality.speech_ratio = speech_ratio
-        if speech_ratio < CONFIG["min_speech_ratio"]:
-            quality.flags.append(QualityFlag.SILENCE_ONLY)
-            quality.usable = False
-            quality.rejection_reason = f"Almost no speech detected ({speech_ratio * 100:.1f}%)"
-            logger.warning(f"{audio_path}: {quality.rejection_reason}")
-            return quality
-    except Exception as e:
-        logger.warning(f"{audio_path}: VAD failed ({e}), proceeding without speech ratio check")
-
-    if not quality.flags:
-        quality.flags.append(QualityFlag.GOOD)
-
-    return quality
-
-
-def _compute_speech_ratio(y: np.ndarray, sr: int) -> float:
-    """Compute ratio of speech frames to total frames using VAD."""
-    audio_int16 = (y * 32768).astype(np.int16)
-    vad = webrtcvad.Vad(2)
-    frame_duration_ms = 30
-    frame_size = int(sr * frame_duration_ms / 1000)
-
-    speech_frames = 0
-    total_frames = 0
-
-    for i in range(len(audio_int16) // frame_size):
-        start = i * frame_size
-        end = start + frame_size
-        if end > len(audio_int16):
-            break
-        frame_bytes = struct.pack(f"{frame_size}h", *audio_int16[start:end])
-        try:
-            if vad.is_speech(frame_bytes, sr):
-                speech_frames += 1
-            total_frames += 1
-        except Exception:
-            total_frames += 1
-
-    return speech_frames / max(total_frames, 1)
-
-
-# =============================================================================
-# SAFE AUDIO LOADER
-# =============================================================================
-
-def _load_audio_safe(path: str) -> tuple:
-    """Load audio with validation. Returns (y, sr) or (None, None) on failure."""
-    try:
-        y, sr = librosa.load(path, sr=CONFIG["target_sr"])
-        if len(y) == 0:
-            return None, None
-        return y, sr
-    except Exception as e:
-        logger.error(f"Failed to load {path}: {e}")
-        return None, None
-
-
-# =============================================================================
-# BIOMARKER EXTRACTION (each returns MetricResult)
-# =============================================================================
 
 def extract_pitch_metrics(y: np.ndarray, sr: int) -> dict:
-    """Extract pitch variability and range from audio."""
-    try:
-        f0, _, _ = librosa.pyin(y, fmin=75, fmax=600, sr=sr)
-        f0_voiced = f0[~np.isnan(f0)]
+    return _extract_pitch_metrics(y, sr, min_voiced_frames=CONFIG["min_voiced_frames"])
 
-        if len(f0_voiced) < CONFIG["min_voiced_frames"]:
-            return {
-                "pitch_variability": MetricResult(reason=f"Only {len(f0_voiced)} voiced frames, need {CONFIG['min_voiced_frames']}"),
-                "pitch_range": MetricResult(reason="Insufficient voiced frames"),
-                "pitch_mean": MetricResult(reason="Insufficient voiced frames"),
-                "f0_voiced": np.array([]),
-            }
 
-        return {
-            "pitch_variability": MetricResult(value=float(np.std(f0_voiced)), computed=True),
-            "pitch_range": MetricResult(value=float(np.max(f0_voiced) - np.min(f0_voiced)), computed=True),
-            "pitch_mean": MetricResult(value=float(np.mean(f0_voiced)), computed=True),
-            "f0_voiced": f0_voiced,
-        }
-    except Exception as e:
-        logger.error(f"Pitch extraction failed: {e}")
-        return {
-            "pitch_variability": MetricResult(reason=f"Extraction error: {e}"),
-            "pitch_range": MetricResult(reason=f"Extraction error: {e}"),
-            "pitch_mean": MetricResult(reason=f"Extraction error: {e}"),
-            "f0_voiced": np.array([]),
-        }
+def extract_voice_stability(audio_path: str) -> dict:
+    return _extract_voice_stability(audio_path)
 
+
+def extract_pause_distribution(audio_path: str) -> dict:
+    return _extract_pause_distribution(audio_path, target_sr=CONFIG["target_sr"])
+
+
+# =============================================================================
+# ASD-SPECIFIC EXTRACTORS — not shared with speech_delay
+# =============================================================================
 
 def extract_spectral_entropy(y: np.ndarray, sr: int) -> MetricResult:
     """Compute spectral entropy."""
@@ -405,7 +238,7 @@ def extract_ltas(y: np.ndarray, sr: int) -> MetricResult:
 
 def extract_response_latency(audio_path: str, prompt_end_ms: float = 0) -> MetricResult:
     """Measure time from prompt end to child's first voiced frame."""
-    y, sr = _load_audio_safe(audio_path)
+    y, sr = _load_audio_safe(audio_path, target_sr=CONFIG["target_sr"])
     if y is None:
         return MetricResult(reason="Could not load audio")
 
@@ -439,108 +272,6 @@ def extract_response_latency(audio_path: str, prompt_end_ms: float = 0) -> Metri
     except Exception as e:
         logger.error(f"Latency extraction failed for {audio_path}: {e}")
         return MetricResult(reason=f"Extraction error: {e}")
-
-
-def extract_voice_stability(audio_path: str) -> dict:
-    """Extract jitter, shimmer, HNR using Parselmouth/Praat."""
-    try:
-        snd = parselmouth.Sound(audio_path)
-        duration = snd.get_total_duration()
-
-        if duration < 2.5:
-            reason = f"Audio too short for Praat analysis ({duration:.1f}s, need 2.5s)"
-            return {
-                "jitter": MetricResult(reason=reason),
-                "shimmer": MetricResult(reason=reason),
-                "hnr": MetricResult(reason=reason),
-            }
-
-        pitch = call(snd, "To Pitch", 0.0, 75, 600)
-        point_process = call(snd, "To PointProcess (periodic, cc)", 75, 600)
-        harmonicity = call(snd, "To Harmonicity (cc)", 0.01, 75, 0.1, 1.0)
-
-        jitter_val = call(point_process, "Get jitter (local)", 0, 0, 0.0001, 0.02, 1.3)
-        shimmer_val = call([snd, point_process], "Get shimmer (local)", 0, 0, 0.0001, 0.02, 1.3, 1.6)
-        hnr_val = call(harmonicity, "Get mean", 0, 0)
-
-        return {
-            "jitter": MetricResult(value=float(jitter_val * 100), computed=True) if jitter_val else MetricResult(reason="Praat returned None for jitter"),
-            "shimmer": MetricResult(value=float(shimmer_val * 100), computed=True) if shimmer_val else MetricResult(reason="Praat returned None for shimmer"),
-            "hnr": MetricResult(value=float(hnr_val), computed=True) if hnr_val else MetricResult(reason="Praat returned None for HNR"),
-        }
-
-    except Exception as e:
-        logger.error(f"Voice stability extraction failed for {audio_path}: {e}")
-        reason = f"Praat error: {e}"
-        return {
-            "jitter": MetricResult(reason=reason),
-            "shimmer": MetricResult(reason=reason),
-            "hnr": MetricResult(reason=reason),
-        }
-
-
-def extract_pause_distribution(audio_path: str) -> dict:
-    """Analyze pause patterns — ratio and distribution variance."""
-    y, sr = _load_audio_safe(audio_path)
-    if y is None:
-        reason = "Could not load audio"
-        return {"pause_ratio": MetricResult(reason=reason), "pause_variance": MetricResult(reason=reason)}
-
-    duration = len(y) / sr
-    if duration < 1.0:
-        reason = f"Audio too short ({duration:.1f}s, need 1.0s)"
-        return {"pause_ratio": MetricResult(reason=reason), "pause_variance": MetricResult(reason=reason)}
-
-    try:
-        audio_int16 = (y * 32768).astype(np.int16)
-        vad = webrtcvad.Vad(2)
-        frame_duration_ms = 30
-        frame_size = int(sr * frame_duration_ms / 1000)
-
-        speech_frames = 0
-        silent_frames = 0
-        current_pause_length = 0
-        pause_lengths = []
-
-        for i in range(len(audio_int16) // frame_size):
-            start = i * frame_size
-            end = start + frame_size
-            if end > len(audio_int16):
-                break
-            frame_bytes = struct.pack(f"{frame_size}h", *audio_int16[start:end])
-            try:
-                is_speech = vad.is_speech(frame_bytes, sr)
-            except Exception:
-                continue
-
-            if is_speech:
-                speech_frames += 1
-                if current_pause_length > 0:
-                    pause_lengths.append(current_pause_length * frame_duration_ms)
-                    current_pause_length = 0
-            else:
-                silent_frames += 1
-                current_pause_length += 1
-
-        total_frames = speech_frames + silent_frames
-        if total_frames == 0:
-            return {
-                "pause_ratio": MetricResult(reason="No frames processed"),
-                "pause_variance": MetricResult(reason="No frames processed"),
-            }
-
-        return {
-            "pause_ratio": MetricResult(value=float(silent_frames / total_frames), computed=True),
-            "pause_variance": MetricResult(
-                value=float(np.var(pause_lengths)) if len(pause_lengths) > 1 else 0.0,
-                computed=True,
-            ),
-        }
-
-    except Exception as e:
-        logger.error(f"Pause distribution failed for {audio_path}: {e}")
-        reason = f"VAD error: {e}"
-        return {"pause_ratio": MetricResult(reason=reason), "pause_variance": MetricResult(reason=reason)}
 
 
 # =============================================================================
@@ -727,50 +458,16 @@ def compute_risk_tier(group_results: dict) -> dict:
 
 
 # =============================================================================
-# VOICE CHECK (soft warning if speaker doesn't look child-like)
+# VOICE CHECK — delegates to shared implementation in audio_analysis
 # =============================================================================
 
 def compute_voice_check(pitch_mean: Optional[float], age_group: str) -> dict:
-    """
-    Soft sanity check: is the speaker plausibly a child in the target age band?
-    Flags if mean F0 is more than `atypical_threshold_sd` SDs below the age-group
-    norm. Adult voices (~120 Hz male, ~210 Hz female) fall far outside the 3-8yo
-    range (~250-300 Hz), so this catches the common "wrong speaker" case.
-    """
-    if pitch_mean is None:
-        return {
-            "pitch_mean_hz": None,
-            "likely_child": None,
-            "reason": "pitch_mean not computed",
-        }
-
-    norms = CONFIG["pitch_mean_norms"].get(age_group)
-    if norms is None:
-        return {
-            "pitch_mean_hz": round(pitch_mean, 1),
-            "likely_child": None,
-            "reason": f"No pitch_mean norm for age group {age_group}",
-        }
-
-    threshold = CONFIG["atypical_threshold_sd"]
-    expected_low = norms["mean"] - threshold * norms["std"]
-    expected_high = norms["mean"] + threshold * norms["std"]
-    likely_child = pitch_mean >= expected_low
-
-    reason = None
-    if not likely_child:
-        reason = (
-            f"Adult voice identified: mean F0 ({pitch_mean:.0f} Hz) is far below "
-            f"expected range for age {age_group} ({expected_low:.0f}-{expected_high:.0f} Hz). "
-            f"The screening targets children 3–8 — interpret tier with caution."
-        )
-
-    return {
-        "pitch_mean_hz": round(pitch_mean, 1),
-        "expected_range_for_age_hz": [round(expected_low, 1), round(expected_high, 1)],
-        "likely_child": likely_child,
-        "reason": reason,
-    }
+    """ASD-scoped wrapper around the shared voice-check helper."""
+    return _compute_voice_check_shared(
+        pitch_mean,
+        age_group,
+        atypical_threshold_sd=CONFIG["atypical_threshold_sd"],
+    )
 
 
 # =============================================================================

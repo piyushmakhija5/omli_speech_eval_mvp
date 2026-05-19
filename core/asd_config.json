@@ -24,10 +24,6 @@
                 36,
                 59
             ],
-            "pitch_mean": {
-                "mean": 295.0,
-                "std": 28.0
-            },
             "pitch_variability": {
                 "mean": 65.0,
                 "std": 18.0
@@ -62,10 +58,6 @@
                 60,
                 83
             ],
-            "pitch_mean": {
-                "mean": 275.0,
-                "std": 28.0
-            },
             "pitch_variability": {
                 "mean": 50.0,
                 "std": 15.0
@@ -100,10 +92,6 @@
                 84,
                 107
             ],
-            "pitch_mean": {
-                "mean": 245.0,
-                "std": 28.0
-            },
             "pitch_variability": {
                 "mean": 42.0,
                 "std": 12.0
